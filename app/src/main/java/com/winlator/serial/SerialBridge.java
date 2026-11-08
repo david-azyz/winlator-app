@@ -11,6 +11,7 @@ import com.hoho.android.usbserial.util.SerialInputOutputManager;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Bridges one Wine COM port (the slave side of a pty) to one USB serial port.
@@ -52,6 +53,38 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
     private final int[] lineSettings = new int[SerialPty.SETTINGS_COUNT];
     private final int[] appliedLineSettings = new int[SerialPty.SETTINGS_COUNT];
     private boolean permissionDenied = false;
+
+    public enum State { WAITING_ADAPTER, PERMISSION_DENIED, CONNECTED, LOOPBACK }
+
+    private volatile State state = State.WAITING_ADAPTER;
+    private volatile String adapterLabel = "";
+    private final AtomicLong bytesSent = new AtomicLong();
+    private final AtomicLong bytesReceived = new AtomicLong();
+
+    public State getState() {
+        return state;
+    }
+
+    public String getAdapterLabel() {
+        return adapterLabel;
+    }
+
+    /** Bytes written by the Windows program (sent to the device). */
+    public long getBytesSent() {
+        return bytesSent.get();
+    }
+
+    /** Bytes delivered to the Windows program (received from the device). */
+    public long getBytesReceived() {
+        return bytesReceived.get();
+    }
+
+    /** {baudRate, stopBits} currently set by the Windows program, or null. */
+    public int[] getCurrentLineSettings() {
+        int[] settings = new int[SerialPty.SETTINGS_COUNT];
+        if (slaveFd == -1 || !SerialPty.getLineSettings(slaveFd, settings)) return null;
+        return new int[]{settings[SerialPty.SETTING_BAUD_RATE], settings[SerialPty.SETTING_STOP_BITS]};
+    }
 
     public SerialBridge(Context context, ComPortMapping mapping, Callback callback) {
         this.context = context;
@@ -152,6 +185,7 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
                     applyLineSettingsIfChanged(false);
                     try {
                         currentPort.write(buffer, count, USB_WRITE_TIMEOUT_MS);
+                        bytesSent.addAndGet(count);
                     }
                     catch (IOException e) {
                         Log.w(TAG, mapping.getComName()+": USB write failed: "+e.getMessage());
@@ -165,10 +199,15 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
     /** Test device: everything the Windows program writes comes back to it. */
     private void runLoopback() {
         byte[] buffer = new byte[4096];
+        state = State.LOOPBACK;
+        adapterLabel = "Loopback";
         callback.onAdapterConnected(this, "Loopback");
         while (running) {
             int count = SerialPty.read(masterFd, buffer, PTY_READ_TIMEOUT_MS);
-            if (count > 0) SerialPty.write(masterFd, buffer, count, PTY_WRITE_TIMEOUT_MS);
+            if (count > 0) {
+                bytesSent.addAndGet(count);
+                if (SerialPty.write(masterFd, buffer, count, PTY_WRITE_TIMEOUT_MS) > 0) bytesReceived.addAndGet(count);
+            }
             else if (count < 0) sleep(100);
         }
     }
@@ -185,6 +224,7 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
             if (permissionDenied) return;
             if (!callback.onPermissionRequired(this, driver)) {
                 permissionDenied = true;
+                state = State.PERMISSION_DENIED;
                 return;
             }
         }
@@ -230,7 +270,9 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
         }
         manager.start();
 
-        callback.onAdapterConnected(this, UsbSerialHelper.getDeviceLabel(driver, mapping.portIndex, driver.getPorts().size()));
+        adapterLabel = UsbSerialHelper.getDeviceLabel(driver, mapping.portIndex, driver.getPorts().size());
+        state = State.CONNECTED;
+        callback.onAdapterConnected(this, adapterLabel);
     }
 
     private void closeAdapter(boolean notify) {
@@ -262,6 +304,7 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
         synchronized (appliedLineSettings) {
             Arrays.fill(appliedLineSettings, 0);
         }
+        state = State.WAITING_ADAPTER;
         if (notify && running) callback.onAdapterDisconnected(this);
     }
 
@@ -304,7 +347,9 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
     public void onNewData(byte[] data) {
         int fd = masterFd;
         if (fd == -1 || data.length == 0) return;
-        if (SerialPty.write(fd, data, data.length, PTY_WRITE_TIMEOUT_MS) < 0) {
+        int written = SerialPty.write(fd, data, data.length, PTY_WRITE_TIMEOUT_MS);
+        if (written > 0) bytesReceived.addAndGet(written);
+        if (written < 0) {
             Log.w(TAG, mapping.getComName()+": pty write failed");
         }
     }

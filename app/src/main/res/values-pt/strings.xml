@@ -306,4 +306,5 @@
     <string name="com_port_connected">%1$s conectada: %2$s</string>
     <string name="com_port_disconnected">%s: adaptador USB desconectado</string>
     <string name="com_port_permission_denied">%s: permissão USB negada</string>
+    <string name="com_port_loopback">Loopback (teste, sem adaptador)</string>
 </resources>

@@ -113,6 +113,11 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
     }
 
     private void run() {
+        if (mapping.isLoopback()) {
+            runLoopback();
+            return;
+        }
+
         byte[] buffer = new byte[4096];
         long lastConnectAttempt = 0;
         long lastLineSettingsCheck = 0;
@@ -154,6 +159,17 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
                     }
                 }
             }
+        }
+    }
+
+    /** Test device: everything the Windows program writes comes back to it. */
+    private void runLoopback() {
+        byte[] buffer = new byte[4096];
+        callback.onAdapterConnected(this, "Loopback");
+        while (running) {
+            int count = SerialPty.read(masterFd, buffer, PTY_READ_TIMEOUT_MS);
+            if (count > 0) SerialPty.write(masterFd, buffer, count, PTY_WRITE_TIMEOUT_MS);
+            else if (count < 0) sleep(100);
         }
     }
 

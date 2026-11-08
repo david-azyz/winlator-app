@@ -18,6 +18,8 @@ import java.util.Locale;
 public class ComPortMapping {
     public static final int MAX_COM_PORTS = 4;
     public static final String DEFAULT_FORMAT = "8N";
+    /** Virtual device that sends back everything it receives, for testing without hardware. */
+    public static final String LOOPBACK_ID = "loopback";
     /** Data bits + parity (N none, E even, O odd, M mark, S space). */
     public static final String[] FORMATS = {"8N", "8E", "8O", "7E", "7O", "7N", "8M", "8S"};
 
@@ -60,12 +62,16 @@ public class ComPortMapping {
         return "COM"+comNumber;
     }
 
+    public boolean isLoopback() {
+        return vendorId == -1;
+    }
+
     public String getDeviceId() {
-        return makeDeviceId(vendorId, productId, portIndex);
+        return isLoopback() ? LOOPBACK_ID : makeDeviceId(vendorId, productId, portIndex);
     }
 
     public boolean matches(UsbDevice device) {
-        return device.getVendorId() == vendorId && device.getProductId() == productId;
+        return !isLoopback() && device.getVendorId() == vendorId && device.getProductId() == productId;
     }
 
     public static String makeDeviceId(int vendorId, int productId, int portIndex) {
@@ -88,7 +94,15 @@ public class ComPortMapping {
 
                 int comNumber = Integer.parseInt(parts[0].substring(3));
                 String[] ids = parts[1].split(":");
-                if (ids.length < 2 || comNumber < 1 || comNumber > MAX_COM_PORTS) continue;
+                if (comNumber < 1 || comNumber > MAX_COM_PORTS) continue;
+
+                if (ids[0].equalsIgnoreCase(LOOPBACK_ID)) {
+                    String format = ids.length > 1 ? ids[1].toUpperCase(Locale.ENGLISH) : DEFAULT_FORMAT;
+                    result.add(new ComPortMapping(comNumber, -1, -1, 0, format));
+                    continue;
+                }
+
+                if (ids.length < 2) continue;
 
                 int vendorId = Integer.parseInt(ids[0], 16);
                 int productId = Integer.parseInt(ids[1], 16);

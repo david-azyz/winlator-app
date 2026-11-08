@@ -37,7 +37,13 @@ jobs:
       - name: Build debug APK
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleDebug
+          # Retry: downloads from services.gradle.org sometimes time out on the runners.
+          for attempt in 1 2 3; do
+            ./gradlew --no-daemon assembleDebug && exit 0
+            echo "Build attempt $attempt failed, retrying in 20s..."
+            sleep 20
+          done
+          exit 1
 
       - name: Rename APK
         run: |

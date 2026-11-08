@@ -561,6 +561,14 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
             // Added even without mappings so COM ports left by a previous session are removed from the registry.
             ArrayList<ComPortMapping> comPortMappings = ComPortMapping.parse(container.getComPorts());
             environment.addComponent(new SerialPortBridgeComponent(new File(container.getRootDir(), ".wine"), comPortMappings));
+
+            if (!comPortMappings.isEmpty()) {
+                String shimPath = SerialPortBridgeComponent.installIoctlShim(this);
+                if (shimPath != null) {
+                    String preload = envVars.has("BOX64_LD_PRELOAD") ? envVars.get("BOX64_LD_PRELOAD") : "";
+                    envVars.put("BOX64_LD_PRELOAD", preload.isEmpty() ? shimPath : preload+":"+shimPath);
+                }
+            }
         }
 
         guestProgramLauncherComponent.setEnvVars(envVars);

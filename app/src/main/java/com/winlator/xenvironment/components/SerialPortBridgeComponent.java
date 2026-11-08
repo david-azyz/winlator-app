@@ -32,6 +32,8 @@ public class SerialPortBridgeComponent extends EnvironmentComponent implements S
     private static final String PTY_PREFIX = "/dev/pts/";
     private static final long PERMISSION_TIMEOUT_MS = 30000;
 
+    private static final String SHIM_ASSET = "serial/libwinlator_serialshim.so";
+
     private final File wineprefixDir;
     private final List<ComPortMapping> mappings;
     private final ArrayList<SerialBridge> bridges = new ArrayList<>();
@@ -39,6 +41,31 @@ public class SerialPortBridgeComponent extends EnvironmentComponent implements S
     public SerialPortBridgeComponent(File wineprefixDir, List<ComPortMapping> mappings) {
         this.wineprefixDir = wineprefixDir;
         this.mappings = mappings;
+    }
+
+    /**
+     * Extracts the x86_64 ioctl shim (tools/serialshim) that must be preloaded
+     * into Wine with BOX64_LD_PRELOAD. Android's SELinux policy blocks several
+     * tty ioctls on ptys (TCGETS2, TCSETS2, TIOCINQ...), which Wine needs for
+     * GetCommState/SetCommState/ClearCommError; the shim emulates them.
+     * Returns the library path, or null if it could not be extracted.
+     */
+    public static String installIoctlShim(Context context) {
+        File dir = new File(context.getFilesDir(), "serial");
+        File shim = new File(dir, "libwinlator_serialshim.so");
+        if (!dir.isDirectory()) dir.mkdirs();
+        try (java.io.InputStream in = context.getAssets().open(SHIM_ASSET);
+             java.io.OutputStream out = new java.io.FileOutputStream(shim)) {
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
+        }
+        catch (java.io.IOException e) {
+            Log.e(TAG, "Failed to extract the serial ioctl shim", e);
+            return null;
+        }
+        shim.setReadable(true, false);
+        return shim.getPath();
     }
 
     @Override

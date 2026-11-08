@@ -26,7 +26,7 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
     private static final int PTY_WRITE_TIMEOUT_MS = 1000;
     private static final int USB_WRITE_TIMEOUT_MS = 2000;
     private static final int RECONNECT_INTERVAL_MS = 1500;
-    private static final int LINE_SETTINGS_INTERVAL_MS = 200;
+    private static final int LINE_SETTINGS_INTERVAL_MS = 50;
 
     public interface Callback {
         void onAdapterConnected(SerialBridge bridge, String label);

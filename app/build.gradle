@@ -9,11 +9,23 @@ android {
         minSdkVersion 26
         targetSdkVersion 28
         versionCode 33
-        versionName "11.2"
+        versionName "11.2-com"
+    }
+
+    // Fixed key so every CI build can be installed over the previous one.
+    // It is public (committed to the repo): use it only for personal builds.
+    signingConfigs {
+        serialbuild {
+            storeFile file('winlator-serial.keystore')
+            storePassword 'winlator'
+            keyAlias 'winlator'
+            keyPassword 'winlator'
+        }
     }
 
     buildTypes {
         debug {
+            signingConfig signingConfigs.serialbuild
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
 

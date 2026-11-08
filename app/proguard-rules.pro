@@ -17,3 +17,6 @@
 #}
 
 -dontobfuscate
+
+# usb-serial-for-android (vendored): drivers are instantiated via reflection
+-keep class com.hoho.android.usbserial.driver.** { *; }

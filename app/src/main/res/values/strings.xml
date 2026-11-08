@@ -358,4 +358,11 @@
     <string name="fgs_notification_content_else">Winlator is running in the background</string>
     <string name="save_mem_on_run_from_steam">Save memory on run from Steam</string>
     <string name="present_mode">Present Mode</string>
+    <string name="com_ports_usb_serial">COM Ports (USB Serial)</string>
+    <string name="com_ports_hint">Connect the USB serial adapter (OTG) and tap Refresh. The second box is data bits + parity (N none, E even, O odd); baud rate and stop bits follow the Windows program. Supported chips: CH340/CH341, FTDI, CP210x, PL2303 and CDC-ACM (Arduino, etc.).</string>
+    <string name="refresh_usb_devices">Refresh</string>
+    <string name="com_port_not_connected">%s (not connected)</string>
+    <string name="com_port_connected">%1$s connected: %2$s</string>
+    <string name="com_port_disconnected">%s: USB adapter disconnected</string>
+    <string name="com_port_permission_denied">%s: USB permission denied</string>
 </resources>

@@ -150,6 +150,7 @@ public class ContainerManager {
         dstContainer.setAudioDriverConfig(srcContainer.getAudioDriverConfig());
         dstContainer.setWinComponents(srcContainer.getWinComponents());
         dstContainer.setDrives(srcContainer.getDrives());
+        dstContainer.setComPorts(srcContainer.getComPorts());
         dstContainer.setHUDMode(srcContainer.getHUDMode());
         dstContainer.setStartupSelection(srcContainer.getStartupSelection());
         dstContainer.setBox64Preset(srcContainer.getBox64Preset());

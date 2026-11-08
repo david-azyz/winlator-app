@@ -35,6 +35,8 @@ import com.winlator.box64.Box64PresetManager;
 import com.winlator.container.Container;
 import com.winlator.container.ContainerManager;
 import com.winlator.container.Drive;
+import com.winlator.serial.ComPortMapping;
+import com.winlator.serial.UsbSerialHelper;
 import com.winlator.container.GraphicsDrivers;
 import com.winlator.contentdialog.AddEnvVarDialog;
 import com.winlator.contentdialog.AudioDriverConfigDialog;
@@ -176,6 +178,7 @@ public class ContainerDetailFragment extends Fragment {
         final EnvVarsView envVarsView = createEnvVarsTab(view);
         createWinComponentsTab(view, isEditMode() ? container.getWinComponents() : Container.DEFAULT_WINCOMPONENTS);
         createDrivesTab(view);
+        createComPortsSection(view);
 
         AppUtils.setupTabLayout(view, R.id.TabLayout, (tabResId) -> {
             if (tabResId == R.id.LLTabAdvanced) if ((byte)sWinVersion.getTag() == -1) WinVersions.loadSpinner(container, sWinVersion);
@@ -194,6 +197,7 @@ public class ContainerDetailFragment extends Fragment {
                 String audioDriver = StringUtils.parseIdentifier(sAudioDriver.getSelectedItem());
                 String wincomponents = getWinComponents(view);
                 String drives = getDrives(view);
+                String comPorts = getComPorts(view);
                 byte hudMode = (byte)sHUDMode.getSelectedItemPosition();
                 String cpuList = cpuListView.getCheckedCPUListAsString();
                 String cpuListWoW64 = cpuListViewWoW64.getCheckedCPUListAsString();
@@ -215,6 +219,7 @@ public class ContainerDetailFragment extends Fragment {
                     container.setAudioDriverConfig(audioDriverConfig);
                     container.setWinComponents(wincomponents);
                     container.setDrives(drives);
+                    container.setComPorts(comPorts);
                     container.setHUDMode(hudMode);
                     container.setStartupSelection(startupSelection);
                     container.setBox64Preset(box64Preset);
@@ -243,6 +248,7 @@ public class ContainerDetailFragment extends Fragment {
                     data.put("audioDriverConfig", audioDriverConfig);
                     data.put("wincomponents", wincomponents);
                     data.put("drives", drives);
+                    data.put("comPorts", comPorts);
                     data.put("hudMode", hudMode);
                     data.put("startupSelection", startupSelection);
                     data.put("box64Preset", box64Preset);
@@ -439,6 +445,93 @@ public class ContainerDetailFragment extends Fragment {
         envVarsView.setEnvVars(new EnvVars(isEditMode() ? container.getEnvVars() : Container.DEFAULT_ENV_VARS));
         view.findViewById(R.id.BTAddEnvVar).setOnClickListener((v) -> (new AddEnvVarDialog(context, envVarsView)).show());
         return envVarsView;
+    }
+
+    private void createComPortsSection(View view) {
+        final Context context = getContext();
+        final LinearLayout parent = view.findViewById(R.id.LLComPorts);
+        final LayoutInflater inflater = LayoutInflater.from(context);
+        final ArrayList<ComPortMapping> savedMappings = ComPortMapping.parse(isEditMode() ? container.getComPorts() : "");
+
+        final Runnable populate = () -> {
+            String[] selectedIds = new String[ComPortMapping.MAX_COM_PORTS];
+            String[] selectedFormats = new String[ComPortMapping.MAX_COM_PORTS];
+            for (int i = 0; i < selectedIds.length; i++) {
+                selectedIds[i] = "";
+                selectedFormats[i] = ComPortMapping.DEFAULT_FORMAT;
+            }
+
+            if (parent.getChildCount() > 0) {
+                for (int i = 0; i < parent.getChildCount() && i < selectedIds.length; i++) {
+                    View itemView = parent.getChildAt(i);
+                    Spinner spinner = itemView.findViewById(R.id.SComDevice);
+                    Object item = spinner.getSelectedItem();
+                    if (item instanceof UsbSerialHelper.PortInfo) selectedIds[i] = ((UsbSerialHelper.PortInfo)item).deviceId;
+                    selectedFormats[i] = ComPortMapping.FORMATS[((Spinner)itemView.findViewById(R.id.SComFormat)).getSelectedItemPosition()];
+                }
+            }
+            else {
+                for (ComPortMapping mapping : savedMappings) {
+                    selectedIds[mapping.comNumber - 1] = mapping.getDeviceId();
+                    selectedFormats[mapping.comNumber - 1] = mapping.format;
+                }
+            }
+
+            List<UsbSerialHelper.PortInfo> ports = UsbSerialHelper.listPorts(context);
+            parent.removeAllViews();
+
+            for (int i = 0; i < ComPortMapping.MAX_COM_PORTS; i++) {
+                ArrayList<UsbSerialHelper.PortInfo> items = new ArrayList<>();
+                items.add(new UsbSerialHelper.PortInfo("", context.getString(R.string.none)));
+                items.addAll(ports);
+
+                int selection = 0;
+                if (!selectedIds[i].isEmpty()) {
+                    for (int j = 1; j < items.size(); j++) {
+                        if (items.get(j).deviceId.equals(selectedIds[i])) {
+                            selection = j;
+                            break;
+                        }
+                    }
+
+                    if (selection == 0) {
+                        items.add(new UsbSerialHelper.PortInfo(selectedIds[i], context.getString(R.string.com_port_not_connected, selectedIds[i])));
+                        selection = items.size() - 1;
+                    }
+                }
+
+                View itemView = inflater.inflate(R.layout.com_port_list_item, parent, false);
+                ((TextView)itemView.findViewById(R.id.TVComName)).setText("COM"+(i + 1));
+                Spinner spinner = itemView.findViewById(R.id.SComDevice);
+                spinner.setAdapter(new ArrayAdapter<>(context, android.R.layout.simple_spinner_dropdown_item, items));
+                spinner.setSelection(selection);
+
+                Spinner sFormat = itemView.findViewById(R.id.SComFormat);
+                sFormat.setAdapter(new ArrayAdapter<>(context, android.R.layout.simple_spinner_dropdown_item, ComPortMapping.FORMATS));
+                sFormat.setSelection(Math.max(0, Arrays.asList(ComPortMapping.FORMATS).indexOf(selectedFormats[i])));
+                parent.addView(itemView);
+            }
+        };
+
+        populate.run();
+        view.findViewById(R.id.BTRefreshComPorts).setOnClickListener((v) -> populate.run());
+    }
+
+    private String getComPorts(View view) {
+        LinearLayout parent = view.findViewById(R.id.LLComPorts);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            View itemView = parent.getChildAt(i);
+            Spinner spinner = itemView.findViewById(R.id.SComDevice);
+            Object item = spinner.getSelectedItem();
+            if (!(item instanceof UsbSerialHelper.PortInfo)) continue;
+            String deviceId = ((UsbSerialHelper.PortInfo)item).deviceId;
+            if (deviceId.isEmpty()) continue;
+            String format = ComPortMapping.FORMATS[((Spinner)itemView.findViewById(R.id.SComFormat)).getSelectedItemPosition()];
+            if (sb.length() > 0) sb.append(",");
+            sb.append("COM").append(i + 1).append("=").append(deviceId).append(":").append(format);
+        }
+        return ComPortMapping.toString(ComPortMapping.parse(sb.toString()));
     }
 
     private String getDrives(View view) {

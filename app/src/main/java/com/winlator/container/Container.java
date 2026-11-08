@@ -40,6 +40,7 @@ public class Container {
     private String wincomponents = DEFAULT_WINCOMPONENTS;
     private String audioDriver = DEFAULT_AUDIO_DRIVER;
     private String drives = DEFAULT_DRIVES;
+    private String comPorts = "";
     private String wineVersion = WineInfo.MAIN_WINE_INFO.identifier();
     private byte hudMode = (byte)FrameRating.Mode.DISABLED.ordinal();
     private byte startupSelection = STARTUP_SELECTION_ESSENTIAL;
@@ -141,6 +142,14 @@ public class Container {
 
     public void setDrives(String drives) {
         this.drives = drives;
+    }
+
+    public String getComPorts() {
+        return comPorts;
+    }
+
+    public void setComPorts(String comPorts) {
+        this.comPorts = comPorts != null ? comPorts : "";
     }
 
     public byte getHUDMode() {
@@ -299,6 +308,7 @@ public class Container {
             data.put("audioDriver", audioDriver);
             data.put("wincomponents", wincomponents);
             data.put("drives", drives);
+            if (!comPorts.isEmpty()) data.put("comPorts", comPorts);
             data.put("hudMode", hudMode);
             data.put("startupSelection", startupSelection);
             data.put("box64Preset", box64Preset);
@@ -314,6 +324,7 @@ public class Container {
     public void loadData(JSONObject data) throws JSONException {
         wineVersion = WineInfo.MAIN_WINE_INFO.identifier();
         dxwrapperConfig = "";
+        comPorts = "";
         graphicsDriverConfig = "";
         audioDriverConfig = "";
 
@@ -357,6 +368,9 @@ public class Container {
                     break;
                 case "drives" :
                     setDrives(data.getString(key));
+                    break;
+                case "comPorts" :
+                    setComPorts(data.getString(key));
                     break;
                 case "showFPS" :
                     setHUDMode((byte)(data.getBoolean(key) ? FrameRating.Mode.SIMPLE.ordinal() : FrameRating.Mode.DISABLED.ordinal()));

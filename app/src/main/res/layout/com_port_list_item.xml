@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="horizontal"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:layout_marginBottom="4dp">
+
+    <TextView
+        android:id="@+id/TVComName"
+        android:layout_width="64dp"
+        android:layout_height="wrap_content" />
+
+    <Spinner
+        style="@style/ComboBox"
+        android:id="@+id/SComDevice"
+        android:layout_width="0dp"
+        android:layout_weight="1" />
+
+    <Spinner
+        style="@style/ComboBox"
+        android:id="@+id/SComFormat"
+        android:layout_width="88dp"
+        android:layout_marginLeft="4dp" />
+</LinearLayout>

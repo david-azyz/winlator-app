@@ -78,6 +78,8 @@ import com.winlator.winhandler.WinHandler;
 import com.winlator.xconnector.UnixSocketConfig;
 import com.winlator.xenvironment.RootFS;
 import com.winlator.xenvironment.XEnvironment;
+import com.winlator.xenvironment.components.SerialPortBridgeComponent;
+import com.winlator.serial.ComPortMapping;
 import com.winlator.xenvironment.components.ALSAServerComponent;
 import com.winlator.xenvironment.components.GuestProgramLauncherComponent;
 import com.winlator.xenvironment.components.NetworkInfoUpdateComponent;
@@ -553,6 +555,12 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
         }
         if (graphicsDriver[1].equals(GraphicsDrivers.VIRGL)) {
             environment.addComponent(new VirGLRendererComponent(xServer, UnixSocketConfig.create(rootPath, UnixSocketConfig.VIRGL_SERVER_PATH)));
+        }
+
+        if (container != null) {
+            // Added even without mappings so COM ports left by a previous session are removed from the registry.
+            ArrayList<ComPortMapping> comPortMappings = ComPortMapping.parse(container.getComPorts());
+            environment.addComponent(new SerialPortBridgeComponent(new File(container.getRootDir(), ".wine"), comPortMappings));
         }
 
         guestProgramLauncherComponent.setEnvVars(envVars);

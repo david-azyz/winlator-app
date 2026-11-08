@@ -32,7 +32,7 @@ import java.util.List;
 
 public class ImagePickerView extends View implements View.OnClickListener {
     private final Bitmap icon;
-    private final List<String> defaultSources = Arrays.asList("wallpaper-1", "wallpaper-2", "wallpaper-3");
+    private final List<String> defaultSources = Arrays.asList("wallpaper-1", "wallpaper-2", "wallpaper-3", "wallpaper-4");
     private String selectedSource = WineThemeManager.DEFAULT_WALLPAPER_ID;
 
     public ImagePickerView(Context context) {

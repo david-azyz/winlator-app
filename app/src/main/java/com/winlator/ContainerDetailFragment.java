@@ -305,9 +305,15 @@ public class ContainerDetailFragment extends Fragment {
 
         WineThemeManager.ThemeInfo desktopTheme = new WineThemeManager.ThemeInfo(isEditMode() ? container.getDesktopTheme() : WineThemeManager.DEFAULT_DESKTOP_THEME);
         RadioGroup rgDesktopTheme = view.findViewById(R.id.RGDesktopTheme);
-        rgDesktopTheme.check(desktopTheme.theme == WineThemeManager.Theme.LIGHT ? R.id.RBLight : R.id.RBDark);
+        rgDesktopTheme.check(desktopTheme.theme == WineThemeManager.Theme.LIGHT ? R.id.RBLight : (desktopTheme.theme == WineThemeManager.Theme.MODERN ? R.id.RBModern : R.id.RBDark));
         final ImagePickerView ipvDesktopBackgroundImage = view.findViewById(R.id.IPVDesktopBackgroundImage);
         ipvDesktopBackgroundImage.setSelectedSource(desktopTheme.wallpaperId);
+        rgDesktopTheme.setOnCheckedChangeListener((group, checkedId) -> {
+            /* The Moderno theme looks best with its own wallpaper: switch to it unless the user picked another one. */
+            if (checkedId == R.id.RBModern && ipvDesktopBackgroundImage.getSelectedSource().equals(WineThemeManager.DEFAULT_WALLPAPER_ID)) {
+                ipvDesktopBackgroundImage.setSelectedSource(WineThemeManager.MODERN_WALLPAPER_ID);
+            }
+        });
         final ColorPickerView cpvDesktopBackgroundColor = view.findViewById(R.id.CPVDesktopBackgroundColor);
         cpvDesktopBackgroundColor.setColor(desktopTheme.backgroundColor);
 
@@ -372,7 +378,8 @@ public class ContainerDetailFragment extends Fragment {
         RadioGroup rgDesktopTheme = view.findViewById(R.id.RGDesktopTheme);
         ImagePickerView ipvDesktopBackgroundImage = view.findViewById(R.id.IPVDesktopBackgroundImage);
         ColorPickerView cpvDesktopBackground = view.findViewById(R.id.CPVDesktopBackgroundColor);
-        WineThemeManager.Theme theme = rgDesktopTheme.getCheckedRadioButtonId() == R.id.RBLight ? WineThemeManager.Theme.LIGHT : WineThemeManager.Theme.DARK;
+        int checkedTheme = rgDesktopTheme.getCheckedRadioButtonId();
+        WineThemeManager.Theme theme = checkedTheme == R.id.RBLight ? WineThemeManager.Theme.LIGHT : (checkedTheme == R.id.RBModern ? WineThemeManager.Theme.MODERN : WineThemeManager.Theme.DARK);
 
        String desktopTheme = theme+","+type+","+cpvDesktopBackground.getColorAsString();
         if (type == WineThemeManager.BackgroundType.IMAGE) {

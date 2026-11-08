@@ -24,6 +24,7 @@ lld-link /nologo /subsystem:console /entry:mainCRTStartup /nodefaultlib /machine
 
 cc comports.c "$OUT/comports.obj"
 lld-link /nologo /subsystem:windows /entry:WinMainCRTStartup /nodefaultlib /machine:x86 \
+         /manifest:embed "/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'" \
          /out:"$OUT/comports.exe" "$OUT/comports.obj" "$OUT/kernel32_comports.lib" \
          "$OUT/user32.lib" "$OUT/gdi32.lib" "$OUT/comctl32.lib"
 

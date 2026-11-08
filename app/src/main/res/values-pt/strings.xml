@@ -309,4 +309,5 @@
     <string name="com_port_loopback">Loopback (teste, sem adaptador)</string>
     <string name="com_port_empty">Porta vazia (teste, sem dispositivo)</string>
     <string name="com_port_auto">Automático (qualquer adaptador USB serial)</string>
+    <string name="modern_theme">Moderno</string>
 </resources>

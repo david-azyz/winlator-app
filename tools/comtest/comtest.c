@@ -31,6 +31,7 @@ typedef const char *LPCSTR;
 #define GENERIC_WRITE 0x40000000UL
 #define OPEN_EXISTING 3
 #define STD_OUTPUT_HANDLE ((DWORD)-11)
+#define STD_INPUT_HANDLE ((DWORD)-10)
 #define PURGE_TXCLEAR 0x0004
 #define PURGE_RXCLEAR 0x0008
 #define EV_RXCHAR 0x0001
@@ -87,6 +88,15 @@ __declspec(dllimport) void WINAPI ExitProcess(unsigned int);
 __declspec(dllimport) LPCSTR WINAPI GetCommandLineA(void);
 
 static HANDLE out;
+
+/* Keeps the window open when the program was started with a double click. */
+static void finish(unsigned int code) {
+    char buf[16];
+    DWORD n;
+    print("\r\nPressione Enter para fechar...");
+    ReadFile(GetStdHandle(STD_INPUT_HANDLE), buf, sizeof(buf), &n, 0);
+    ExitProcess(code);
+}
 
 static int str_len(const char *s) {
     int n = 0;
@@ -326,7 +336,7 @@ void mainCRTStartup(void) {
         print_error("nao foi possivel abrir a porta");
         print("A porta nao existe para o Windows/Wine. Confira a configuracao\r\n");
         print("das Portas COM do container e reinicie o container.\r\n");
-        ExitProcess(2);
+        finish(2);
     }
     print("Porta aberta.\r\n");
 
@@ -336,7 +346,7 @@ void mainCRTStartup(void) {
     if (monitorMode) {
         monitor(port, monitorBaud);
         CloseHandle(port);
-        ExitProcess(0);
+        finish(0);
     }
 
     /* Same speeds wPTU uses, switching on the open port. */
@@ -354,5 +364,5 @@ void mainCRTStartup(void) {
         print(" teste(s) falharam.\r\n");
         print("Com adaptador real, os pinos 2 e 3 do DB9 precisam estar ligados entre si.\r\n");
     }
-    ExitProcess(failures == 0 ? 0 : 1);
+    finish(failures == 0 ? 0 : 1);
 }

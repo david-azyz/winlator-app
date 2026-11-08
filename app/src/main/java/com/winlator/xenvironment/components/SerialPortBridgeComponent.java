@@ -37,6 +37,9 @@ public class SerialPortBridgeComponent extends EnvironmentComponent implements S
     private final File wineprefixDir;
     private final List<ComPortMapping> mappings;
     private final ArrayList<SerialBridge> bridges = new ArrayList<>();
+    private Thread statusThread;
+    private volatile boolean running = false;
+    private String lastStatus = null;
 
     public SerialPortBridgeComponent(File wineprefixDir, List<ComPortMapping> mappings) {
         this.wineprefixDir = wineprefixDir;
@@ -54,18 +57,96 @@ public class SerialPortBridgeComponent extends EnvironmentComponent implements S
         File dir = new File(context.getFilesDir(), "serial");
         File shim = new File(dir, "libwinlator_serialshim.so");
         if (!dir.isDirectory()) dir.mkdirs();
-        try (java.io.InputStream in = context.getAssets().open(SHIM_ASSET);
-             java.io.OutputStream out = new java.io.FileOutputStream(shim)) {
+        if (!copyAsset(context, SHIM_ASSET, shim)) return null;
+        shim.setReadable(true, false);
+        return shim.getPath();
+    }
+
+    private static boolean copyAsset(Context context, String asset, File target) {
+        try (java.io.InputStream in = context.getAssets().open(asset);
+             java.io.OutputStream out = new java.io.FileOutputStream(target)) {
             byte[] buffer = new byte[8192];
             int count;
             while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
+            return true;
         }
         catch (java.io.IOException e) {
-            Log.e(TAG, "Failed to extract the serial ioctl shim", e);
-            return null;
+            Log.e(TAG, "Failed to extract "+asset, e);
+            return false;
         }
-        shim.setReadable(true, false);
-        return shim.getPath();
+    }
+
+    /** Puts the COM port tools (start menu > System Tools) into C:\windows. */
+    private void installWindowsTools(Context context) {
+        File windowsDir = new File(wineprefixDir, "drive_c/windows");
+        if (!windowsDir.isDirectory()) return;
+        copyAsset(context, "serial/comports.exe", new File(windowsDir, "comports.exe"));
+        copyAsset(context, "serial/comtest.exe", new File(windowsDir, "comtest.exe"));
+    }
+
+    private static String stateLabel(SerialBridge bridge) {
+        switch (bridge.getState()) {
+            case CONNECTED: return "Conectado";
+            case LOOPBACK: return "Teste (loopback)";
+            case PERMISSION_DENIED: return "Permiss\u00e3o USB negada";
+            default: return "Desconectado";
+        }
+    }
+
+    /**
+     * Writes C:\windows\winlator-comports.ini, read by comports.exe
+     * ("Gerenciador de Portas COM"). ANSI (windows-1252) so the Windows ANSI
+     * profile functions show accented characters.
+     */
+    private void writeStatus() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[General]\r\nCount=").append(bridges.size()).append("\r\n");
+        for (int i = 0; i < bridges.size(); i++) {
+            SerialBridge bridge = bridges.get(i);
+            ComPortMapping mapping = bridge.mapping;
+            int[] line = bridge.getCurrentLineSettings();
+            String device = mapping.isLoopback() ? "Loopback (teste)" : bridge.getAdapterLabel();
+            if (device.isEmpty()) device = "Adaptador USB "+mapping.getDeviceId();
+            String format = mapping.getDataBits()+String.valueOf(mapping.format.charAt(1))+(line != null ? line[1] : 1);
+
+            sb.append("[Port").append(i + 1).append("]\r\n");
+            sb.append("Name=").append(mapping.getComName()).append("\r\n");
+            sb.append("Device=").append(device.replace("\r", " ").replace("\n", " ")).append("\r\n");
+            sb.append("DeviceId=").append(mapping.getDeviceId()).append("\r\n");
+            sb.append("State=").append(stateLabel(bridge)).append("\r\n");
+            sb.append("Baud=").append(line != null ? line[0] : 0).append("\r\n");
+            sb.append("Format=").append(format).append("\r\n");
+            sb.append("Sent=").append(bridge.getBytesSent()).append("\r\n");
+            sb.append("Received=").append(bridge.getBytesReceived()).append("\r\n");
+        }
+
+        String status = sb.toString();
+        if (status.equals(lastStatus)) return;
+        lastStatus = status;
+
+        File windowsDir = new File(wineprefixDir, "drive_c/windows");
+        if (!windowsDir.isDirectory()) return;
+        File target = new File(windowsDir, "winlator-comports.ini");
+        File temp = new File(windowsDir, "winlator-comports.ini.tmp");
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(temp)) {
+            out.write(status.getBytes(java.nio.charset.Charset.forName("windows-1252")));
+        }
+        catch (Exception e) {
+            return;
+        }
+        if (!temp.renameTo(target)) temp.delete();
+    }
+
+    private void runStatusWriter() {
+        while (running) {
+            writeStatus();
+            try {
+                Thread.sleep(1000);
+            }
+            catch (InterruptedException e) {
+                return;
+            }
+        }
     }
 
     @Override
@@ -83,12 +164,23 @@ public class SerialPortBridgeComponent extends EnvironmentComponent implements S
 
         updateWineRegistry();
         removeStaleDosdevicesLinks();
+        installWindowsTools(context);
 
         for (SerialBridge bridge : bridges) bridge.start();
+
+        running = true;
+        writeStatus();
+        statusThread = new Thread(this::runStatusWriter, "SerialPortStatus");
+        statusThread.start();
     }
 
     @Override
     public void stop() {
+        running = false;
+        if (statusThread != null) {
+            statusThread.interrupt();
+            statusThread = null;
+        }
         for (SerialBridge bridge : bridges) bridge.stop();
         bridges.clear();
     }

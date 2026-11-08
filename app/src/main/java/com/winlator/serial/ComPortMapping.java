@@ -20,6 +20,8 @@ public class ComPortMapping {
     public static final String DEFAULT_FORMAT = "8N";
     /** Virtual device that sends back everything it receives, for testing without hardware. */
     public static final String LOOPBACK_ID = "loopback";
+    /** Virtual port with nothing attached: the program's data is accepted and dropped. */
+    public static final String EMPTY_ID = "empty";
     /** Data bits + parity (N none, E even, O odd, M mark, S space). */
     public static final String[] FORMATS = {"8N", "8E", "8O", "7E", "7O", "7N", "8M", "8S"};
 
@@ -66,12 +68,22 @@ public class ComPortMapping {
         return vendorId == -1;
     }
 
+    public boolean isEmpty() {
+        return vendorId == -2;
+    }
+
+    public boolean isVirtual() {
+        return vendorId < 0;
+    }
+
     public String getDeviceId() {
-        return isLoopback() ? LOOPBACK_ID : makeDeviceId(vendorId, productId, portIndex);
+        if (isLoopback()) return LOOPBACK_ID;
+        if (isEmpty()) return EMPTY_ID;
+        return makeDeviceId(vendorId, productId, portIndex);
     }
 
     public boolean matches(UsbDevice device) {
-        return !isLoopback() && device.getVendorId() == vendorId && device.getProductId() == productId;
+        return !isVirtual() && device.getVendorId() == vendorId && device.getProductId() == productId;
     }
 
     public static String makeDeviceId(int vendorId, int productId, int portIndex) {
@@ -96,9 +108,10 @@ public class ComPortMapping {
                 String[] ids = parts[1].split(":");
                 if (comNumber < 1 || comNumber > MAX_COM_PORTS) continue;
 
-                if (ids[0].equalsIgnoreCase(LOOPBACK_ID)) {
+                if (ids[0].equalsIgnoreCase(LOOPBACK_ID) || ids[0].equalsIgnoreCase(EMPTY_ID)) {
                     String format = ids.length > 1 ? ids[1].toUpperCase(Locale.ENGLISH) : DEFAULT_FORMAT;
-                    result.add(new ComPortMapping(comNumber, -1, -1, 0, format));
+                    int id = ids[0].equalsIgnoreCase(LOOPBACK_ID) ? -1 : -2;
+                    result.add(new ComPortMapping(comNumber, id, id, 0, format));
                     continue;
                 }
 

@@ -54,7 +54,7 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
     private final int[] appliedLineSettings = new int[SerialPty.SETTINGS_COUNT];
     private boolean permissionDenied = false;
 
-    public enum State { WAITING_ADAPTER, PERMISSION_DENIED, CONNECTED, LOOPBACK }
+    public enum State { WAITING_ADAPTER, PERMISSION_DENIED, CONNECTED, LOOPBACK, EMPTY }
 
     private volatile State state = State.WAITING_ADAPTER;
     private volatile String adapterLabel = "";
@@ -150,6 +150,10 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
             runLoopback();
             return;
         }
+        if (mapping.isEmpty()) {
+            runEmpty();
+            return;
+        }
 
         byte[] buffer = new byte[4096];
         long lastConnectAttempt = 0;
@@ -208,6 +212,19 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
                 bytesSent.addAndGet(count);
                 if (SerialPty.write(masterFd, buffer, count, PTY_WRITE_TIMEOUT_MS) > 0) bytesReceived.addAndGet(count);
             }
+            else if (count < 0) sleep(100);
+        }
+    }
+
+    /** Test port with nothing attached: data written by the program is counted and dropped. */
+    private void runEmpty() {
+        byte[] buffer = new byte[4096];
+        state = State.EMPTY;
+        adapterLabel = "Porta vazia";
+        callback.onAdapterConnected(this, "Porta vazia (teste)");
+        while (running) {
+            int count = SerialPty.read(masterFd, buffer, PTY_READ_TIMEOUT_MS);
+            if (count > 0) bytesSent.addAndGet(count);
             else if (count < 0) sleep(100);
         }
     }

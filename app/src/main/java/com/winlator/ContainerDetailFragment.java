@@ -484,6 +484,7 @@ public class ContainerDetailFragment extends Fragment {
                 ArrayList<UsbSerialHelper.PortInfo> items = new ArrayList<>();
                 items.add(new UsbSerialHelper.PortInfo("", context.getString(R.string.none)));
                 items.add(new UsbSerialHelper.PortInfo(ComPortMapping.LOOPBACK_ID, context.getString(R.string.com_port_loopback)));
+                items.add(new UsbSerialHelper.PortInfo(ComPortMapping.EMPTY_ID, context.getString(R.string.com_port_empty)));
                 items.addAll(ports);
 
                 int selection = 0;

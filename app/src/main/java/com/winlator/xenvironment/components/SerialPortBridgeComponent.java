@@ -87,6 +87,7 @@ public class SerialPortBridgeComponent extends EnvironmentComponent implements S
         switch (bridge.getState()) {
             case CONNECTED: return "Conectado";
             case LOOPBACK: return "Teste (loopback)";
+            case EMPTY: return "Teste (sem dispositivo)";
             case PERMISSION_DENIED: return "Permiss\u00e3o USB negada";
             default: return "Desconectado";
         }
@@ -104,7 +105,7 @@ public class SerialPortBridgeComponent extends EnvironmentComponent implements S
             SerialBridge bridge = bridges.get(i);
             ComPortMapping mapping = bridge.mapping;
             int[] line = bridge.getCurrentLineSettings();
-            String device = mapping.isLoopback() ? "Loopback (teste)" : bridge.getAdapterLabel();
+            String device = mapping.isLoopback() ? "Loopback (teste)" : mapping.isEmpty() ? "Porta vazia (teste)" : bridge.getAdapterLabel();
             if (device.isEmpty()) device = "Adaptador USB "+mapping.getDeviceId();
             String format = mapping.getDataBits()+String.valueOf(mapping.format.charAt(1))+(line != null ? line[1] : 1);
 

@@ -17,3 +17,4 @@ ShowWindow@8
 UpdateWindow@4
 GetClientRect@8
 SetWindowTextA@8
+EnableWindow@8

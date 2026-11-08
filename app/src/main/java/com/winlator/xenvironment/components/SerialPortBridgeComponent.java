@@ -81,7 +81,6 @@ public class SerialPortBridgeComponent extends EnvironmentComponent implements S
         File windowsDir = new File(wineprefixDir, "drive_c/windows");
         if (!windowsDir.isDirectory()) return;
         copyAsset(context, "serial/comports.exe", new File(windowsDir, "comports.exe"));
-        copyAsset(context, "serial/comtest.exe", new File(windowsDir, "comtest.exe"));
     }
 
     private static String stateLabel(SerialBridge bridge) {

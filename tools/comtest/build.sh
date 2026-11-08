@@ -29,5 +29,5 @@ lld-link /nologo /subsystem:windows /entry:WinMainCRTStartup /nodefaultlib /mach
 
 cp "$OUT/comtest.exe" "$OUT/comports.exe" .
 mkdir -p ../../app/src/main/assets/serial
-cp comtest.exe comports.exe ../../app/src/main/assets/serial/
+cp comports.exe ../../app/src/main/assets/serial/
 echo "Built comtest.exe and comports.exe"

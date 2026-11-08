@@ -36,13 +36,28 @@ typedef struct { long left, top, right, bottom; } RECT;
 typedef struct { DWORD dwSize, dwICC; } INITCOMMONCONTROLSEX;
 typedef struct { HWND hwndFrom; UINT idFrom; UINT code; } NMHDR;
 typedef struct { UINT mask; int fmt; int cx; LPSTR pszText; int cchTextMax; int iSubItem; int iImage; int iOrder; } LVCOLUMNA;
+typedef struct { DWORD DCBlength; DWORD BaudRate; DWORD flags; WORD wReserved, XonLim, XoffLim; BYTE ByteSize, Parity, StopBits; char XonChar, XoffChar, ErrorChar, EofChar, EvtChar; WORD wReserved1; } DCB;
+typedef struct { DWORD ReadIntervalTimeout, ReadTotalTimeoutMultiplier, ReadTotalTimeoutConstant, WriteTotalTimeoutMultiplier, WriteTotalTimeoutConstant; } COMMTIMEOUTS;
+typedef DWORD (WINAPI *THREADPROC)(void *);
 typedef struct { UINT mask; int iItem; int iSubItem; UINT state; UINT stateMask; LPSTR pszText; int cchTextMax; int iImage; LPARAM lParam; int iIndent; } LVITEMA;
 
 __declspec(dllimport) HINSTANCE WINAPI GetModuleHandleA(LPCSTR);
 __declspec(dllimport) DWORD WINAPI GetPrivateProfileStringA(LPCSTR, LPCSTR, LPCSTR, LPSTR, DWORD, LPCSTR);
 __declspec(dllimport) UINT WINAPI GetPrivateProfileIntA(LPCSTR, LPCSTR, int, LPCSTR);
 __declspec(dllimport) UINT WINAPI GetWindowsDirectoryA(LPSTR, UINT);
-__declspec(dllimport) UINT WINAPI WinExec(LPCSTR, UINT);
+__declspec(dllimport) HANDLE WINAPI CreateFileA(LPCSTR, DWORD, DWORD, void *, DWORD, DWORD, HANDLE);
+__declspec(dllimport) BOOL WINAPI CloseHandle(HANDLE);
+__declspec(dllimport) BOOL WINAPI ReadFile(HANDLE, void *, DWORD, DWORD *, void *);
+__declspec(dllimport) BOOL WINAPI WriteFile(HANDLE, const void *, DWORD, DWORD *, void *);
+__declspec(dllimport) BOOL WINAPI GetCommState(HANDLE, DCB *);
+__declspec(dllimport) BOOL WINAPI SetCommState(HANDLE, DCB *);
+__declspec(dllimport) BOOL WINAPI BuildCommDCBA(LPCSTR, DCB *);
+__declspec(dllimport) BOOL WINAPI SetCommTimeouts(HANDLE, COMMTIMEOUTS *);
+__declspec(dllimport) BOOL WINAPI PurgeComm(HANDLE, DWORD);
+__declspec(dllimport) DWORD WINAPI GetLastError(void);
+__declspec(dllimport) DWORD WINAPI GetTickCount(void);
+__declspec(dllimport) void WINAPI Sleep(DWORD);
+__declspec(dllimport) HANDLE WINAPI CreateThread(void *, DWORD, THREADPROC, void *, DWORD, DWORD *);
 __declspec(dllimport) void WINAPI ExitProcess(UINT);
 
 __declspec(dllimport) unsigned short WINAPI RegisterClassExA(const WNDCLASSEXA *);
@@ -62,6 +77,7 @@ __declspec(dllimport) BOOL WINAPI ShowWindow(HWND, int);
 __declspec(dllimport) BOOL WINAPI UpdateWindow(HWND);
 __declspec(dllimport) BOOL WINAPI GetClientRect(HWND, RECT *);
 __declspec(dllimport) BOOL WINAPI SetWindowTextA(HWND, LPCSTR);
+__declspec(dllimport) BOOL WINAPI EnableWindow(HWND, BOOL);
 __declspec(dllimport) HGDIOBJ WINAPI GetStockObject(int);
 __declspec(dllimport) BOOL WINAPI InitCommonControlsEx(const INITCOMMONCONTROLSEX *);
 
@@ -105,6 +121,19 @@ __declspec(dllimport) BOOL WINAPI InitCommonControlsEx(const INITCOMMONCONTROLSE
 #define COLOR_BTNFACE 15
 #define CW_USEDEFAULT ((int)0x80000000)
 
+#define ES_MULTILINE 0x0004
+#define ES_AUTOVSCROLL 0x0040
+#define ES_READONLY 0x0800
+#define WS_VSCROLL 0x00200000
+#define EM_SETSEL 0x00B1
+#define EM_SCROLLCARET 0x00B7
+#define GENERIC_READ 0x80000000UL
+#define GENERIC_WRITE 0x40000000UL
+#define OPEN_EXISTING 3
+#define INVALID_HANDLE_VALUE ((HANDLE)(long)-1)
+#define PURGE_TXCLEAR 0x0004
+#define PURGE_RXCLEAR 0x0008
+
 #define ID_LIST 100
 #define ID_PROPERTIES 101
 #define ID_TEST 102
@@ -115,7 +144,10 @@ __declspec(dllimport) BOOL WINAPI InitCommonControlsEx(const INITCOMMONCONTROLSE
 #define COLUMNS 7
 #define FIELD_LEN 96
 
-static HWND mainWindow, header, list, statusText, btnProperties, btnTest, btnRefresh;
+static HWND mainWindow, header, list, statusText, btnProperties, btnTest, btnRefresh, resultLabel, resultBox;
+static char testLog[4096];
+static char testPort[16];
+static volatile int testRunning = 0;
 static char iniPath[300];
 static char cache[MAX_PORTS][COLUMNS][FIELD_LEN];
 static char deviceIds[MAX_PORTS][FIELD_LEN];
@@ -280,19 +312,141 @@ static void show_properties(void) {
     MessageBoxA(mainWindow, text, title, MB_OK | MB_ICONINFORMATION);
 }
 
+static void log_append(const char *text) {
+    str_cat(testLog, text, sizeof(testLog));
+    SetWindowTextA(resultBox, testLog);
+    int len = str_len(testLog);
+    SendMessageA(resultBox, EM_SETSEL, (WPARAM)len, len);
+    SendMessageA(resultBox, EM_SCROLLCARET, 0, 0);
+}
+
+static void log_num(unsigned long v) {
+    char num[16];
+    num_to_str(v, num);
+    log_append(num);
+}
+
+static void log_error(const char *what) {
+    log_append("ERRO: ");
+    log_append(what);
+    log_append(" (codigo ");
+    log_num(GetLastError());
+    log_append(")\r\n");
+}
+
+static int configure_port(HANDLE port, unsigned long baud) {
+    char mode[64], num[16];
+    DCB dcb;
+    BYTE *p = (BYTE *)&dcb;
+    for (unsigned i = 0; i < sizeof(dcb); i++) p[i] = 0;
+    dcb.DCBlength = sizeof(dcb);
+
+    num_to_str(baud, num);
+    str_copy(mode, "baud=", sizeof(mode));
+    str_cat(mode, num, sizeof(mode));
+    str_cat(mode, " parity=N data=8 stop=1", sizeof(mode));
+
+    if (!GetCommState(port, &dcb)) { log_error("GetCommState falhou"); return 0; }
+    if (!BuildCommDCBA(mode, &dcb)) { log_error("BuildCommDCB falhou"); return 0; }
+    if (!SetCommState(port, &dcb)) { log_error("SetCommState falhou"); return 0; }
+    COMMTIMEOUTS timeouts = {50, 0, 300, 0, 1000};
+    if (!SetCommTimeouts(port, &timeouts)) { log_error("SetCommTimeouts falhou"); return 0; }
+    return 1;
+}
+
+/* Sends a pattern and expects the same bytes back (loopback). */
+static int echo_test(HANDLE port, unsigned long baud) {
+    static const char pattern[] = "WINLATOR-COM-TEST 0123456789 abcdefghijklmnopqrstuvwxyz\r\n";
+    BYTE received[128];
+    DWORD total = 0, n;
+    int len = str_len(pattern);
+
+    log_append("Teste a ");
+    log_num(baud);
+    log_append(" baud... ");
+    if (!configure_port(port, baud)) return 0;
+
+    Sleep(150);
+    PurgeComm(port, PURGE_RXCLEAR | PURGE_TXCLEAR);
+    if (!WriteFile(port, pattern, (DWORD)len, &n, 0) || n != (DWORD)len) { log_error("WriteFile falhou"); return 0; }
+
+    DWORD start = GetTickCount();
+    while (total < (DWORD)len && GetTickCount() - start < 3000) {
+        if (!ReadFile(port, received + total, sizeof(received) - total, &n, 0)) { log_error("ReadFile falhou"); return 0; }
+        total += n;
+    }
+
+    if (total == 0) {
+        log_append("FALHOU: nada voltou.\r\n");
+        return 0;
+    }
+    int match = total == (DWORD)len;
+    for (DWORD i = 0; match && i < total; i++) if (received[i] != (BYTE)pattern[i]) match = 0;
+    if (match) {
+        log_append("OK (");
+        log_num(total);
+        log_append(" bytes)\r\n");
+        return 1;
+    }
+    log_append("FALHOU: recebidos ");
+    log_num(total);
+    log_append(" de ");
+    log_num((unsigned long)len);
+    log_append(" bytes, diferentes do enviado.\r\n");
+    return 0;
+}
+
+static DWORD WINAPI test_thread(void *param) {
+    (void)param;
+    char path[32];
+    int failures = 0;
+    static const unsigned long speeds[] = {9600, 19200, 38400};
+
+    testLog[0] = 0;
+    log_append("Testando ");
+    log_append(testPort);
+    log_append("...\r\n");
+
+    str_copy(path, "\\\\.\\", sizeof(path));
+    str_cat(path, testPort, sizeof(path));
+    HANDLE port = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, 0, 0, OPEN_EXISTING, 0, 0);
+    if (port == INVALID_HANDLE_VALUE) {
+        log_error("nao foi possivel abrir a porta");
+        log_append("Se outro programa (ex.: wPTU) estiver usando a porta, feche-o antes de testar.\r\n");
+    }
+    else {
+        for (int i = 0; i < 3; i++) if (!echo_test(port, speeds[i])) failures++;
+        CloseHandle(port);
+        if (failures == 0) log_append("RESULTADO: TUDO OK. A porta envia e recebe dados nas 3 velocidades.\r\n");
+        else {
+            log_append("RESULTADO: ");
+            log_num((unsigned long)failures);
+            log_append(" teste(s) falharam. Com adaptador real, ligue os pinos 2 e 3 do DB9 para o teste.\r\n");
+        }
+    }
+
+    testRunning = 0;
+    EnableWindow(btnTest, 1);
+    return 0;
+}
+
 static void test_port(void) {
+    if (testRunning) return;
     int row = selected_row();
     if (row < 0) {
         MessageBoxA(mainWindow, "Selecione uma porta na lista.", "Testar porta", MB_OK | MB_ICONINFORMATION);
         return;
     }
 
-    char cmd[400];
-    GetWindowsDirectoryA(cmd, 260);
-    str_cat(cmd, "\\comtest.exe ", sizeof(cmd));
-    str_cat(cmd, cache[row][0], sizeof(cmd));
-    if (WinExec(cmd, SW_SHOWNORMAL) <= 31) {
-        MessageBoxA(mainWindow, "Nao foi possivel abrir o comtest.exe.", "Testar porta", MB_OK | MB_ICONWARNING);
+    str_copy(testPort, cache[row][0], sizeof(testPort));
+    testRunning = 1;
+    EnableWindow(btnTest, 0);
+    DWORD tid;
+    HANDLE thread = CreateThread(0, 0, test_thread, 0, 0, &tid);
+    if (thread) CloseHandle(thread);
+    else {
+        testRunning = 0;
+        EnableWindow(btnTest, 1);
     }
 }
 
@@ -301,8 +455,12 @@ static void layout(void) {
     GetClientRect(mainWindow, &rc);
     int w = rc.right - rc.left, h = rc.bottom - rc.top;
     int buttonsY = h - 58;
+    int resultH = 96;
+    int resultY = buttonsY - resultH - 8;
     MoveWindow(header, 10, 8, w - 20, 18, 1);
-    MoveWindow(list, 10, 28, w - 20, buttonsY - 36, 1);
+    MoveWindow(list, 10, 28, w - 20, resultY - 22 - 28 - 4, 1);
+    MoveWindow(resultLabel, 10, resultY - 20, w - 20, 18, 1);
+    MoveWindow(resultBox, 10, resultY, w - 20, resultH, 1);
     MoveWindow(btnRefresh, w - 100, buttonsY, 90, 26, 1);
     MoveWindow(btnTest, w - 200, buttonsY, 92, 26, 1);
     MoveWindow(btnProperties, w - 300, buttonsY, 92, 26, 1);
@@ -334,6 +492,9 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             btnTest = create_child(0, "BUTTON", "Testar porta", WS_TABSTOP, ID_TEST, inst);
             btnRefresh = create_child(0, "BUTTON", "Atualizar", WS_TABSTOP, ID_REFRESH, inst);
             statusText = create_child(0, "STATIC", "", 0, 0, inst);
+            resultLabel = create_child(0, "STATIC", "Resultado do teste", 0, 0, inst);
+            resultBox = create_child(WS_EX_CLIENTEDGE, "EDIT", "Selecione uma porta e clique em Testar porta. O teste envia dados e confere se voltam (Loopback, ou pinos 2 e 3 do DB9 ligados).",
+                                     ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL, 0, inst);
             layout();
             refresh();
             SetTimer(hwnd, TIMER_REFRESH, 1000, 0);
@@ -387,7 +548,7 @@ void WinMainCRTStartup(void) {
     RegisterClassExA(&wc);
 
     HWND hwnd = CreateWindowExA(0, "WinlatorComPorts", "Gerenciador de Portas COM", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                                CW_USEDEFAULT, CW_USEDEFAULT, 680, 340, 0, 0, inst, 0);
+                                CW_USEDEFAULT, CW_USEDEFAULT, 700, 460, 0, 0, inst, 0);
     ShowWindow(hwnd, SW_SHOWNORMAL);
     UpdateWindow(hwnd);
 

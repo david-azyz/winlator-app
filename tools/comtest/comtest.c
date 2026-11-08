@@ -89,6 +89,8 @@ __declspec(dllimport) LPCSTR WINAPI GetCommandLineA(void);
 
 static HANDLE out;
 
+static void print(const char *s);
+
 /* Keeps the window open when the program was started with a double click. */
 static void finish(unsigned int code) {
     char buf[16];

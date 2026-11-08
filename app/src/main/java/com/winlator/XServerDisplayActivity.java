@@ -559,7 +559,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
 
         if (container != null) {
             // Added even without mappings so COM ports left by a previous session are removed from the registry.
-            ArrayList<ComPortMapping> comPortMappings = ComPortMapping.parse(container.getComPorts());
+            ArrayList<ComPortMapping> comPortMappings = ComPortMapping.parseWithDefault(container.getComPorts());
             environment.addComponent(new SerialPortBridgeComponent(new File(container.getRootDir(), ".wine"), comPortMappings));
 
             if (!comPortMappings.isEmpty()) {

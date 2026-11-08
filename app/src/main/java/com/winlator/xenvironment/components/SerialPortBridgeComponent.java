@@ -106,7 +106,7 @@ public class SerialPortBridgeComponent extends EnvironmentComponent implements S
             ComPortMapping mapping = bridge.mapping;
             int[] line = bridge.getCurrentLineSettings();
             String device = mapping.isLoopback() ? "Loopback (teste)" : mapping.isEmpty() ? "Porta vazia (teste)" : bridge.getAdapterLabel();
-            if (device.isEmpty()) device = "Adaptador USB "+mapping.getDeviceId();
+            if (device.isEmpty()) device = mapping.isAuto() ? "Autom\u00e1tico (aguardando adaptador)" : "Adaptador USB "+mapping.getDeviceId();
             String format = mapping.getDataBits()+String.valueOf(mapping.format.charAt(1))+(line != null ? line[1] : 1);
 
             sb.append("[Port").append(i + 1).append("]\r\n");

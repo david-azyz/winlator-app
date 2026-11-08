@@ -367,4 +367,5 @@
     <string name="com_port_permission_denied">%s: USB permission denied</string>
     <string name="com_port_loopback">Loopback (test, no adapter)</string>
     <string name="com_port_empty">Empty port (test, no device)</string>
+    <string name="com_port_auto">Automatic (any USB serial adapter)</string>
 </resources>

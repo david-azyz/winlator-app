@@ -22,6 +22,12 @@ public class ComPortMapping {
     public static final String LOOPBACK_ID = "loopback";
     /** Virtual port with nothing attached: the program's data is accepted and dropped. */
     public static final String EMPTY_ID = "empty";
+    /** Uses the first USB serial adapter that is plugged in, whatever its model. */
+    public static final String AUTO_ID = "auto";
+    /** Stored when the user turned every COM port off (an empty value means "use the default"). */
+    public static final String NONE_VALUE = "none";
+    /** Used for containers whose COM ports were never configured. */
+    public static final String DEFAULT_MAPPINGS = "COM1="+AUTO_ID+":"+DEFAULT_FORMAT;
     /** Data bits + parity (N none, E even, O odd, M mark, S space). */
     public static final String[] FORMATS = {"8N", "8E", "8O", "7E", "7O", "7N", "8M", "8S"};
 
@@ -72,18 +78,26 @@ public class ComPortMapping {
         return vendorId == -2;
     }
 
+    public boolean isAuto() {
+        return vendorId == -3;
+    }
+
+    /** Loopback and empty ports have no USB device behind them. */
     public boolean isVirtual() {
-        return vendorId < 0;
+        return isLoopback() || isEmpty();
     }
 
     public String getDeviceId() {
         if (isLoopback()) return LOOPBACK_ID;
         if (isEmpty()) return EMPTY_ID;
+        if (isAuto()) return AUTO_ID;
         return makeDeviceId(vendorId, productId, portIndex);
     }
 
     public boolean matches(UsbDevice device) {
-        return !isVirtual() && device.getVendorId() == vendorId && device.getProductId() == productId;
+        if (isVirtual()) return false;
+        if (isAuto()) return true;
+        return device.getVendorId() == vendorId && device.getProductId() == productId;
     }
 
     public static String makeDeviceId(int vendorId, int productId, int portIndex) {
@@ -108,9 +122,9 @@ public class ComPortMapping {
                 String[] ids = parts[1].split(":");
                 if (comNumber < 1 || comNumber > MAX_COM_PORTS) continue;
 
-                if (ids[0].equalsIgnoreCase(LOOPBACK_ID) || ids[0].equalsIgnoreCase(EMPTY_ID)) {
+                if (ids[0].equalsIgnoreCase(LOOPBACK_ID) || ids[0].equalsIgnoreCase(EMPTY_ID) || ids[0].equalsIgnoreCase(AUTO_ID)) {
                     String format = ids.length > 1 ? ids[1].toUpperCase(Locale.ENGLISH) : DEFAULT_FORMAT;
-                    int id = ids[0].equalsIgnoreCase(LOOPBACK_ID) ? -1 : -2;
+                    int id = ids[0].equalsIgnoreCase(LOOPBACK_ID) ? -1 : ids[0].equalsIgnoreCase(EMPTY_ID) ? -2 : -3;
                     result.add(new ComPortMapping(comNumber, id, id, 0, format));
                     continue;
                 }
@@ -126,6 +140,11 @@ public class ComPortMapping {
             catch (NumberFormatException e) {}
         }
         return result;
+    }
+
+    /** Like parse(), but an unconfigured (empty) value gives the default COM1 = automatic. */
+    public static ArrayList<ComPortMapping> parseWithDefault(String value) {
+        return parse(value == null || value.isEmpty() ? DEFAULT_MAPPINGS : value);
     }
 
     public static String toString(Iterable<ComPortMapping> mappings) {

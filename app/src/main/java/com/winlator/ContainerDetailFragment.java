@@ -451,7 +451,7 @@ public class ContainerDetailFragment extends Fragment {
         final Context context = getContext();
         final LinearLayout parent = view.findViewById(R.id.LLComPorts);
         final LayoutInflater inflater = LayoutInflater.from(context);
-        final ArrayList<ComPortMapping> savedMappings = ComPortMapping.parse(isEditMode() ? container.getComPorts() : "");
+        final ArrayList<ComPortMapping> savedMappings = ComPortMapping.parseWithDefault(isEditMode() ? container.getComPorts() : "");
 
         final Runnable populate = () -> {
             String[] selectedIds = new String[ComPortMapping.MAX_COM_PORTS];
@@ -483,6 +483,7 @@ public class ContainerDetailFragment extends Fragment {
             for (int i = 0; i < ComPortMapping.MAX_COM_PORTS; i++) {
                 ArrayList<UsbSerialHelper.PortInfo> items = new ArrayList<>();
                 items.add(new UsbSerialHelper.PortInfo("", context.getString(R.string.none)));
+                items.add(new UsbSerialHelper.PortInfo(ComPortMapping.AUTO_ID, context.getString(R.string.com_port_auto)));
                 items.add(new UsbSerialHelper.PortInfo(ComPortMapping.LOOPBACK_ID, context.getString(R.string.com_port_loopback)));
                 items.add(new UsbSerialHelper.PortInfo(ComPortMapping.EMPTY_ID, context.getString(R.string.com_port_empty)));
                 items.addAll(ports);
@@ -533,7 +534,8 @@ public class ContainerDetailFragment extends Fragment {
             if (sb.length() > 0) sb.append(",");
             sb.append("COM").append(i + 1).append("=").append(deviceId).append(":").append(format);
         }
-        return ComPortMapping.toString(ComPortMapping.parse(sb.toString()));
+        String value = ComPortMapping.toString(ComPortMapping.parse(sb.toString()));
+        return value.isEmpty() ? ComPortMapping.NONE_VALUE : value;
     }
 
     private String getDrives(View view) {

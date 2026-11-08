@@ -38,10 +38,6 @@
                 "path": "C:/windows/comports.exe"
             },
             {
-                "name": "Teste de Porta COM",
-                "path": "C:/windows/comtest.exe"
-            },
-            {
                 "name": "GPUInfo",
                 "path": "Z:/opt/apps/GPUInfo.exe"
             },

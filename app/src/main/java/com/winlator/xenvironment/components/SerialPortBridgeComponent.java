@@ -42,6 +42,8 @@ public class SerialPortBridgeComponent extends EnvironmentComponent implements S
     private volatile boolean running = false;
     private String lastStatus = null;
     private long lastTrafficSequence = -1;
+    private long shimLogOffset = 0;
+    private static volatile String shimStatus = "biblioteca de compatibilidade nao instalada";
 
     public SerialPortBridgeComponent(File wineprefixDir, List<ComPortMapping> mappings) {
         this.wineprefixDir = wineprefixDir;
@@ -59,8 +61,12 @@ public class SerialPortBridgeComponent extends EnvironmentComponent implements S
         File dir = new File(context.getFilesDir(), "serial");
         File shim = new File(dir, "libwinlator_serialshim.so");
         if (!dir.isDirectory()) dir.mkdirs();
-        if (!copyAsset(context, SHIM_ASSET, shim)) return null;
+        if (!copyAsset(context, SHIM_ASSET, shim)) {
+            shimStatus = "falha ao instalar a biblioteca de compatibilidade";
+            return null;
+        }
         shim.setReadable(true, false);
+        shimStatus = "biblioteca de compatibilidade carregada ("+shim.length()+" bytes)";
         return shim.getPath();
     }
 
@@ -139,8 +145,29 @@ public class SerialPortBridgeComponent extends EnvironmentComponent implements S
         if (!temp.renameTo(target)) temp.delete();
     }
 
+    /** Copies new lines written by the ioctl shim (inside Wine) into the traffic log. */
+    private void readShimLog() {
+        File log = new File(wineprefixDir, "drive_c/windows/winlator-serialshim.log");
+        long length = log.length();
+        if (length <= shimLogOffset) return;
+        try (java.io.RandomAccessFile file = new java.io.RandomAccessFile(log, "r")) {
+            file.seek(shimLogOffset);
+            byte[] data = new byte[(int)Math.min(length - shimLogOffset, 65536)];
+            file.readFully(data);
+            String text = new String(data, java.nio.charset.StandardCharsets.UTF_8);
+            int end = text.lastIndexOf('\n');
+            if (end < 0) return;
+            shimLogOffset += text.substring(0, end + 1).getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+            for (String line : text.substring(0, end).split("\n")) {
+                if (!line.trim().isEmpty()) TrafficLog.event("compat", line.trim());
+            }
+        }
+        catch (Exception e) {}
+    }
+
     /** Writes C:\\windows\\winlator-comtraffic.txt, shown by the Trafego button of comports.exe. */
     private void writeTraffic() {
+        readShimLog();
         long sequence = TrafficLog.getSequence();
         if (sequence == lastTrafficSequence) return;
         lastTrafficSequence = sequence;
@@ -191,6 +218,9 @@ public class SerialPortBridgeComponent extends EnvironmentComponent implements S
         for (SerialBridge bridge : bridges) bridge.start();
 
         TrafficLog.clear();
+        new File(wineprefixDir, "drive_c/windows/winlator-serialshim.log").delete();
+        shimLogOffset = 0;
+        TrafficLog.event("sistema", shimStatus+", Android "+android.os.Build.VERSION.RELEASE+" ("+android.os.Build.MANUFACTURER+" "+android.os.Build.MODEL+")");
         for (SerialBridge bridge : bridges) TrafficLog.event(bridge.mapping.getComName(), "porta criada ("+bridge.getSlavePath()+"), modo "+bridge.mapping.getDeviceId());
 
         running = true;

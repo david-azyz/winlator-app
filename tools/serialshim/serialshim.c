@@ -167,34 +167,149 @@ static int is_pty(int fd) {
     return starts_with(target, "/dev/pts/");
 }
 
-static int force_emulation(void) {
-    static int cached = -1;
-    if (cached == -1) {
-        static char buf[16384];
-        const char *key = "WINLATOR_SERIALSHIM_FORCE=1";
-        cached = 0;
-        long fd = sys3(SYS_open, (long)"/proc/self/environ", 0, 0);
-        if (fd >= 0) {
-            long n = sys3(SYS_read, fd, (long)buf, sizeof(buf) - 1);
-            sys3(SYS_close, fd, 0, 0);
-            for (long i = 0; n > 0 && i < n; i++) {
-                if ((i == 0 || buf[i - 1] == 0) && starts_with(buf + i, key)) cached = 1;
-            }
+static int env_loaded = 0;
+static int env_force = 0;
+static char env_prefix[512];
+
+static void load_env(void) {
+    if (env_loaded) return;
+    env_loaded = 1;
+    static char buf[32768];
+    long fd = sys3(SYS_open, (long)"/proc/self/environ", 0, 0);
+    if (fd < 0) return;
+    long n = sys3(SYS_read, fd, (long)buf, sizeof(buf) - 1);
+    sys3(SYS_close, fd, 0, 0);
+    if (n <= 0) return;
+    buf[n] = 0;
+    for (long i = 0; i < n; i++) {
+        if (i > 0 && buf[i - 1] != 0) continue;
+        if (starts_with(buf + i, "WINLATOR_SERIALSHIM_FORCE=1")) env_force = 1;
+        if (starts_with(buf + i, "WINEPREFIX=")) {
+            const char *v = buf + i + 11;
+            int k = 0;
+            while (v[k] && k < (int)sizeof(env_prefix) - 1) { env_prefix[k] = v[k]; k++; }
+            env_prefix[k] = 0;
         }
     }
-    return cached;
+}
+
+static int force_emulation(void) {
+    load_env();
+    return env_force;
+}
+
+/* ---- diagnostics: C:\windows\winlator-serialshim.log, shown by the COM port manager ---- */
+#define SYS_write 1
+#define SYS_getpid 39
+#define O_WRONLY 01
+#define O_APPEND 02000
+
+static int log_lines = 0;
+
+static int s_len(const char *s) { int n = 0; while (s[n]) n++; return n; }
+
+static void s_cat(char *dst, int max, const char *src) {
+    int n = s_len(dst);
+    while (*src && n < max - 1) dst[n++] = *src++;
+    dst[n] = 0;
+}
+
+static void s_num(char *dst, int max, unsigned long v, int base) {
+    char tmp[24];
+    int i = 0;
+    const char *digits = "0123456789ABCDEF";
+    do { tmp[i++] = digits[v % base]; v /= base; } while (v && i < 23);
+    char out[24];
+    int k = 0;
+    while (i) out[k++] = tmp[--i];
+    out[k] = 0;
+    s_cat(dst, max, out);
+}
+
+static void shim_log(const char *msg) {
+    load_env();
+    if (!env_prefix[0] || log_lines >= 200) return;
+    log_lines++;
+
+    char path[600];
+    path[0] = 0;
+    s_cat(path, sizeof(path), env_prefix);
+    s_cat(path, sizeof(path), "/drive_c/windows/winlator-serialshim.log");
+
+    char comm[32];
+    comm[0] = 0;
+    long cfd = sys3(SYS_open, (long)"/proc/self/comm", 0, 0);
+    if (cfd >= 0) {
+        long n = sys3(SYS_read, cfd, (long)comm, sizeof(comm) - 1);
+        sys3(SYS_close, cfd, 0, 0);
+        if (n < 0) n = 0;
+        comm[n] = 0;
+        for (int i = 0; comm[i]; i++) if (comm[i] == '\n') comm[i] = 0;
+    }
+
+    char line[400];
+    line[0] = 0;
+    s_cat(line, sizeof(line), comm[0] ? comm : "?");
+    s_cat(line, sizeof(line), "[");
+    s_num(line, sizeof(line), (unsigned long)sys3(SYS_getpid, 0, 0, 0), 10);
+    s_cat(line, sizeof(line), "] ");
+    s_cat(line, sizeof(line), msg);
+    s_cat(line, sizeof(line), "\n");
+
+    long fd = sys3(SYS_open, (long)path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0) return;
+    sys3(SYS_write, fd, (long)line, s_len(line));
+    sys3(SYS_close, fd, 0, 0);
+}
+
+/* Logs the first time each tty ioctl is seen on a COM pty in this process, with its result. */
+static unsigned long seen_reqs[32];
+static int seen_count = 0;
+static int announced = 0;
+
+static void log_ioctl_once(unsigned long req, long native, long final_result, int emulated) {
+    for (int i = 0; i < seen_count; i++) if (seen_reqs[i] == req) return;
+    if (seen_count < 32) seen_reqs[seen_count++] = req;
+
+    char msg[160];
+    msg[0] = 0;
+    s_cat(msg, sizeof(msg), "ioctl 0x");
+    s_num(msg, sizeof(msg), req, 16);
+    if (native >= 0) s_cat(msg, sizeof(msg), " ok");
+    else {
+        s_cat(msg, sizeof(msg), " bloqueado (erro ");
+        s_num(msg, sizeof(msg), (unsigned long)(-native), 10);
+        s_cat(msg, sizeof(msg), ")");
+        if (emulated) s_cat(msg, sizeof(msg), final_result >= 0 ? " -> emulado ok" : " -> emulacao falhou");
+        else s_cat(msg, sizeof(msg), " -> sem emulacao");
+    }
+    shim_log(msg);
 }
 
 /* Discards the data waiting to be read on fd (bytes received while no program used the port). */
-static void drain_input(int fd) {
+static long drain_input(int fd) {
     static char junk[4096];
+    long total = 0;
     long flags = sys3(SYS_fcntl, fd, F_GETFL, 0);
-    if (flags < 0) return;
+    if (flags < 0) return 0;
     if (!(flags & O_NONBLOCK)) sys3(SYS_fcntl, fd, F_SETFL, flags | O_NONBLOCK);
     for (int i = 0; i < 64; i++) {
-        if (sys3(SYS_read, fd, (long)junk, sizeof(junk)) <= 0) break;
+        long n = sys3(SYS_read, fd, (long)junk, sizeof(junk));
+        if (n <= 0) break;
+        total += n;
     }
     if (!(flags & O_NONBLOCK)) sys3(SYS_fcntl, fd, F_SETFL, flags);
+    return total;
+}
+
+static void log_drain(const char *what, long n) {
+    char msg[120];
+    msg[0] = 0;
+    s_cat(msg, sizeof(msg), what);
+    s_cat(msg, sizeof(msg), ": ");
+    s_num(msg, sizeof(msg), (unsigned long)n, 10);
+    s_cat(msg, sizeof(msg), " bytes descartados");
+    shim_log(msg);
 }
 
 static long emulate(int fd, unsigned long req, void *arg) {
@@ -256,7 +371,10 @@ static long emulate(int fd, unsigned long req, void *arg) {
         case TCFLSH: {
             /* PurgeComm: TCFLSH may be blocked; an input flush is done by reading out the queue. */
             int what = (int)(long)arg;
-            if (what == TCIFLUSH || what == TCIOFLUSH) drain_input(fd);
+            if (what == TCIFLUSH || what == TCIOFLUSH) {
+                long n = drain_input(fd);
+                if (n > 0) log_drain("PurgeComm", n);
+            }
             return 0;
         }
         case TIOCOUTQ:
@@ -277,16 +395,25 @@ int ioctl(int fd, unsigned long req, ...) {
     req &= 0xFFFFFFFFUL;
 
     long r;
+    int tty_req = ((req >> 8) & 0xFF) == 0x54;
     if (force_emulation() && is_pty(fd)) {
         r = emulate(fd, req, arg);
         if (r == -ENOTTY) r = sys3(SYS_ioctl, fd, (long)req, (long)arg);
     }
     else {
         r = sys3(SYS_ioctl, fd, (long)req, (long)arg);
-        if (r < 0 && (r == -EACCES || r == -EPERM || r == -ENOTTY || r == -EINVAL) && is_pty(fd)) {
+        int pty = (tty_req && !announced) || r < 0 ? is_pty(fd) : 0;
+        if (pty && !announced) {
+            announced = 1;
+            shim_log("compatibilidade da porta COM ativa");
+        }
+        if (r < 0 && (r == -EACCES || r == -EPERM || r == -ENOTTY || r == -EINVAL) && pty) {
+            long native = r;
             long e = emulate(fd, req, arg);
             if (e != -ENOTTY) r = e;
+            log_ioctl_once(req, native, r, e != -ENOTTY);
         }
+        else if (pty && r < 0) log_ioctl_once(req, r, r, 0);
     }
 
     if (r < 0) return fail(-r);
@@ -312,7 +439,19 @@ static int looks_like_com_path(const char *path) {
 
 static long do_openat(int dirfd, const char *path, int flags, long mode) {
     long fd = sys4(SYS_openat, dirfd, (long)path, flags, mode);
-    if (fd >= 0 && looks_like_com_path(path) && is_pty((int)fd)) drain_input((int)fd);
+    if (fd >= 0 && looks_like_com_path(path) && is_pty((int)fd)) {
+        long n = drain_input((int)fd);
+        char msg[160];
+        msg[0] = 0;
+        s_cat(msg, sizeof(msg), "porta aberta: ");
+        s_cat(msg, sizeof(msg), path);
+        if (n > 0) {
+            s_cat(msg, sizeof(msg), ", ");
+            s_num(msg, sizeof(msg), (unsigned long)n, 10);
+            s_cat(msg, sizeof(msg), " bytes antigos descartados");
+        }
+        shim_log(msg);
+    }
     return fd;
 }
 
@@ -352,4 +491,37 @@ int __open_2(const char *path, int flags) {
 
 int __open64_2(const char *path, int flags) {
     return open_result(do_openat(AT_FDCWD, path, flags, 0));
+}
+
+/*
+ * termios helpers called by Wine's serial code (PurgeComm -> tcflush,
+ * FlushFileBuffers -> tcdrain, flow control -> tcflow). They are libc
+ * functions, so they do not go through the ioctl() hook above.
+ */
+#define TCXONC 0x540A
+
+static int tc_call(int fd, unsigned long req, long arg, const char *name) {
+    long r = force_emulation() && is_pty(fd) ? -EACCES : sys3(SYS_ioctl, fd, (long)req, arg);
+    if (r >= 0) return 0;
+    if ((r == -EACCES || r == -EPERM || r == -ENOTTY || r == -EINVAL) && is_pty(fd)) {
+        long e = emulate(fd, req, (void *)arg);
+        if (e == -ENOTTY) e = 0; /* nothing to do on a pty bridge */
+        log_ioctl_once(req, r, e, 1);
+        (void)name;
+        if (e >= 0) return 0;
+        r = e;
+    }
+    return fail(-r);
+}
+
+int tcflush(int fd, int queue) {
+    return tc_call(fd, TCFLSH, queue, "tcflush");
+}
+
+int tcdrain(int fd) {
+    return tc_call(fd, TCSBRK, 1, "tcdrain");
+}
+
+int tcflow(int fd, int action) {
+    return tc_call(fd, TCXONC, action, "tcflow");
 }

@@ -187,15 +187,18 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
                 // Without an adapter the data is dropped, like a real port with nothing attached.
                 if (currentPort != null) {
                     applyLineSettingsIfChanged(false);
+                    TrafficLog.data(mapping.getComName(), "TX", buffer, 0, count);
                     try {
                         currentPort.write(buffer, count, USB_WRITE_TIMEOUT_MS);
                         bytesSent.addAndGet(count);
                     }
                     catch (IOException e) {
                         Log.w(TAG, mapping.getComName()+": USB write failed: "+e.getMessage());
+                        TrafficLog.event(mapping.getComName(), "erro ao enviar pelo USB: "+e.getMessage());
                         closeAdapter(true);
                     }
                 }
+                else TrafficLog.data(mapping.getComName(), "TX descartado (sem adaptador)", buffer, 0, count);
             }
         }
     }
@@ -210,7 +213,11 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
             int count = SerialPty.read(masterFd, buffer, PTY_READ_TIMEOUT_MS);
             if (count > 0) {
                 bytesSent.addAndGet(count);
-                if (SerialPty.write(masterFd, buffer, count, PTY_WRITE_TIMEOUT_MS) > 0) bytesReceived.addAndGet(count);
+                TrafficLog.data(mapping.getComName(), "TX", buffer, 0, count);
+                if (SerialPty.write(masterFd, buffer, count, PTY_WRITE_TIMEOUT_MS) > 0) {
+                    bytesReceived.addAndGet(count);
+                    TrafficLog.data(mapping.getComName(), "RX", buffer, 0, count);
+                }
             }
             else if (count < 0) sleep(100);
         }
@@ -224,7 +231,10 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
         callback.onAdapterConnected(this, "Porta vazia (teste)");
         while (running) {
             int count = SerialPty.read(masterFd, buffer, PTY_READ_TIMEOUT_MS);
-            if (count > 0) bytesSent.addAndGet(count);
+            if (count > 0) {
+                bytesSent.addAndGet(count);
+                TrafficLog.data(mapping.getComName(), "TX", buffer, 0, count);
+            }
             else if (count < 0) sleep(100);
         }
     }
@@ -289,6 +299,7 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
 
         adapterLabel = UsbSerialHelper.getDeviceLabel(driver, mapping.portIndex, driver.getPorts().size());
         state = State.CONNECTED;
+        TrafficLog.event(mapping.getComName(), "adaptador conectado: "+adapterLabel);
         callback.onAdapterConnected(this, adapterLabel);
     }
 
@@ -322,6 +333,7 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
             Arrays.fill(appliedLineSettings, 0);
         }
         state = State.WAITING_ADAPTER;
+        TrafficLog.event(mapping.getComName(), "adaptador desconectado");
         if (notify && running) callback.onAdapterDisconnected(this);
     }
 
@@ -345,6 +357,7 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
         try {
             // Data bits and parity come from the user setting: the pty driver forces CS8/no parity.
             currentPort.setParameters(lineSettings[SerialPty.SETTING_BAUD_RATE], mapping.getDataBits(), stopBits, mapping.getParity());
+            TrafficLog.event(mapping.getComName(), "configurada: "+lineSettings[SerialPty.SETTING_BAUD_RATE]+" baud, "+mapping.getDataBits()+mapping.format.charAt(1)+lineSettings[SerialPty.SETTING_STOP_BITS]+(lineSettings[SerialPty.SETTING_RTS_CTS] == 1 ? ", RTS/CTS" : ""));
         }
         catch (Exception e) {
             Log.w(TAG, mapping.getComName()+": setParameters failed: "+e.getMessage());
@@ -364,6 +377,7 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
     public void onNewData(byte[] data) {
         int fd = masterFd;
         if (fd == -1 || data.length == 0) return;
+        TrafficLog.data(mapping.getComName(), "RX", data, 0, data.length);
         int written = SerialPty.write(fd, data, data.length, PTY_WRITE_TIMEOUT_MS);
         if (written > 0) bytesReceived.addAndGet(written);
         if (written < 0) {

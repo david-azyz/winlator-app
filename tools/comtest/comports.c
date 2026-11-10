@@ -138,13 +138,25 @@ __declspec(dllimport) BOOL WINAPI InitCommonControlsEx(const INITCOMMONCONTROLSE
 #define ID_PROPERTIES 101
 #define ID_TEST 102
 #define ID_REFRESH 103
+#define ID_TRAFFIC 104
+#define ID_RESET 105
+#define FILE_SHARE_READ 1
+#define FILE_SHARE_WRITE 2
+#define FILE_SHARE_DELETE 4
+#define TRAFFIC_MAX_LINES 80
 #define TIMER_REFRESH 1
 
 #define MAX_PORTS 16
 #define COLUMNS 7
 #define FIELD_LEN 96
 
-static HWND mainWindow, header, list, statusText, btnProperties, btnTest, btnRefresh, resultLabel, resultBox;
+static HWND mainWindow, header, list, statusText, btnProperties, btnTest, btnRefresh, btnTraffic, btnReset, resultLabel, resultBox;
+static int trafficMode = 0;
+static unsigned long trafficBaseline = 0;
+static unsigned long counterBaseline[MAX_PORTS][2];
+static char trafficFile[300];
+static char trafficRaw[65536];
+static char trafficShown[16384];
 static char testLog[4096];
 static char testPort[16];
 static volatile int testRunning = 0;
@@ -241,6 +253,118 @@ static void insert_row(int row) {
     SendMessageA(list, LVM_INSERTITEMA, 0, (LPARAM)&item);
 }
 
+static void refresh(void);
+
+static unsigned long parse_ulong(const char *s) {
+    unsigned long v = 0;
+    while (*s >= '0' && *s <= '9') v = v * 10 + (unsigned long)(*s++ - '0');
+    return v;
+}
+
+/* Shows the lines of winlator-comtraffic.txt newer than trafficBaseline (last TRAFFIC_MAX_LINES). */
+static void refresh_traffic(void) {
+    static unsigned long lastShownSeq = (unsigned long)-1;
+    HANDLE file = CreateFileA(trafficFile, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0, OPEN_EXISTING, 0, 0);
+    DWORD n = 0;
+    if (file == INVALID_HANDLE_VALUE) {
+        SetWindowTextA(resultBox, "Nenhum trafego registrado ainda.");
+        return;
+    }
+    ReadFile(file, trafficRaw, sizeof(trafficRaw) - 1, &n, 0);
+    CloseHandle(file);
+    trafficRaw[n] = 0;
+
+    /* Collect line starts with sequence > baseline. */
+    static char *starts[400];
+    int count = 0;
+    unsigned long lastSeq = 0;
+    char *p = trafficRaw;
+    while (*p) {
+        char *line = p;
+        while (*p && *p != '\n') p++;
+        if (*p) p++;
+        if (line[0] != '#') continue;
+        unsigned long seq = parse_ulong(line + 1);
+        if (seq > lastSeq) lastSeq = seq;
+        if (seq <= trafficBaseline) continue;
+        if (count < 400) starts[count++] = line;
+        else {
+            for (int i = 1; i < 400; i++) starts[i - 1] = starts[i];
+            starts[399] = line;
+        }
+    }
+    if (lastSeq < trafficBaseline) trafficBaseline = 0;
+    if (lastSeq == lastShownSeq && count > 0) return;
+    lastShownSeq = lastSeq;
+
+    trafficShown[0] = 0;
+    if (count == 0) {
+        str_copy(trafficShown, "Monitor de trafego ligado. Aguardando dados...\r\n(TX = enviado pelo programa, RX = recebido do dispositivo)", sizeof(trafficShown));
+    }
+    int first = count > TRAFFIC_MAX_LINES ? count - TRAFFIC_MAX_LINES : 0;
+    for (int i = first; i < count; i++) {
+        char *line = starts[i];
+        while (*line && *line != ' ') line++;
+        if (*line == ' ') line++;
+        int len = 0;
+        while (line[len] && line[len] != '\r' && line[len] != '\n') len++;
+        int used = str_len(trafficShown);
+        if (used + len + 3 >= (int)sizeof(trafficShown)) break;
+        for (int k = 0; k < len; k++) trafficShown[used + k] = line[k];
+        trafficShown[used + len] = '\r';
+        trafficShown[used + len + 1] = '\n';
+        trafficShown[used + len + 2] = 0;
+    }
+    SetWindowTextA(resultBox, trafficShown);
+    int textLen = str_len(trafficShown);
+    SendMessageA(resultBox, EM_SETSEL, (WPARAM)textLen, textLen);
+    SendMessageA(resultBox, EM_SCROLLCARET, 0, 0);
+}
+
+static void reset_counters(void) {
+    char value[FIELD_LEN];
+    for (int i = 0; i < rowCount && i < MAX_PORTS; i++) {
+        read_field(i + 1, "Sent", value, sizeof(value));
+        counterBaseline[i][0] = parse_ulong(value);
+        read_field(i + 1, "Received", value, sizeof(value));
+        counterBaseline[i][1] = parse_ulong(value);
+    }
+
+    /* Hide traffic logged so far. */
+    HANDLE file = CreateFileA(trafficFile, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0, OPEN_EXISTING, 0, 0);
+    if (file != INVALID_HANDLE_VALUE) {
+        DWORD n = 0;
+        ReadFile(file, trafficRaw, sizeof(trafficRaw) - 1, &n, 0);
+        CloseHandle(file);
+        trafficRaw[n] = 0;
+        unsigned long lastSeq = 0;
+        char *p = trafficRaw;
+        while (*p) {
+            if (*p == '#') {
+                unsigned long seq = parse_ulong(p + 1);
+                if (seq > lastSeq) lastSeq = seq;
+            }
+            while (*p && *p != '\n') p++;
+            if (*p) p++;
+        }
+        trafficBaseline = lastSeq;
+    }
+
+    for (int i = 0; i < MAX_PORTS; i++) cache[i][5][0] = cache[i][6][0] = 1;
+    refresh();
+    if (trafficMode) refresh_traffic();
+    else SetWindowTextA(resultBox, "Contadores zerados.");
+}
+
+static void toggle_traffic(void) {
+    if (testRunning) return;
+    trafficMode = !trafficMode;
+    SetWindowTextA(btnTraffic, trafficMode ? "Parar monitor" : "Trafego");
+    SetWindowTextA(resultLabel, trafficMode ? "Monitor de trafego (TX = enviado, RX = recebido)" : "Resultado do teste");
+    if (trafficMode) refresh_traffic();
+    else SetWindowTextA(resultBox, "");
+}
+
 static void refresh(void) {
     int count = (int)GetPrivateProfileIntA("General", "Count", 0, iniPath);
     if (count < 0) count = 0;
@@ -259,6 +383,10 @@ static void refresh(void) {
         for (int c = 0; c < COLUMNS; c++) {
             read_field(i + 1, keys[c], value, sizeof(value));
             if (c >= 5) {
+                unsigned long n = parse_ulong(value);
+                /* Counters restart when the container restarts. */
+                if (n < counterBaseline[i][c - 5]) counterBaseline[i][c - 5] = 0;
+                num_to_str(n - counterBaseline[i][c - 5], value);
                 group_thousands(value, grouped);
                 set_cell(i, c, grouped);
             }
@@ -274,7 +402,7 @@ static void refresh(void) {
         char status[128], num[8];
         num_to_str((unsigned long)count, num);
         str_copy(status, num, sizeof(status));
-        str_cat(status, count == 1 ? " porta configurada - atualiza a cada 1 segundo" : " portas configuradas - atualiza a cada 1 segundo", sizeof(status));
+        str_cat(status, count == 1 ? " porta configurada - atualizado em tempo real" : " portas configuradas - atualizado em tempo real", sizeof(status));
         SetWindowTextA(statusText, status);
     }
 }
@@ -438,6 +566,7 @@ static void test_port(void) {
         return;
     }
 
+    if (trafficMode) toggle_traffic();
     str_copy(testPort, cache[row][0], sizeof(testPort));
     testRunning = 1;
     EnableWindow(btnTest, 0);
@@ -455,7 +584,7 @@ static void layout(void) {
     GetClientRect(mainWindow, &rc);
     int w = rc.right - rc.left, h = rc.bottom - rc.top;
     int buttonsY = h - 58;
-    int resultH = 96;
+    int resultH = 190;
     int resultY = buttonsY - resultH - 8;
     MoveWindow(header, 10, 8, w - 20, 18, 1);
     MoveWindow(list, 10, 28, w - 20, resultY - 22 - 28 - 4, 1);
@@ -464,6 +593,8 @@ static void layout(void) {
     MoveWindow(btnRefresh, w - 100, buttonsY, 90, 26, 1);
     MoveWindow(btnTest, w - 200, buttonsY, 92, 26, 1);
     MoveWindow(btnProperties, w - 300, buttonsY, 92, 26, 1);
+    MoveWindow(btnTraffic, w - 404, buttonsY, 96, 26, 1);
+    MoveWindow(btnReset, w - 508, buttonsY, 96, 26, 1);
     MoveWindow(statusText, 10, h - 24, w - 20, 18, 1);
 }
 
@@ -491,13 +622,15 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             btnProperties = create_child(0, "BUTTON", "Propriedades", WS_TABSTOP, ID_PROPERTIES, inst);
             btnTest = create_child(0, "BUTTON", "Testar porta", WS_TABSTOP, ID_TEST, inst);
             btnRefresh = create_child(0, "BUTTON", "Atualizar", WS_TABSTOP, ID_REFRESH, inst);
+            btnTraffic = create_child(0, "BUTTON", "Trafego", WS_TABSTOP, ID_TRAFFIC, inst);
+            btnReset = create_child(0, "BUTTON", "Zerar", WS_TABSTOP, ID_RESET, inst);
             statusText = create_child(0, "STATIC", "", 0, 0, inst);
             resultLabel = create_child(0, "STATIC", "Resultado do teste", 0, 0, inst);
             resultBox = create_child(WS_EX_CLIENTEDGE, "EDIT", "Selecione uma porta e clique em Testar porta. O teste envia dados e confere se voltam (Loopback, ou pinos 2 e 3 do DB9 ligados).",
                                      ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL, 0, inst);
             layout();
             refresh();
-            SetTimer(hwnd, TIMER_REFRESH, 1000, 0);
+            SetTimer(hwnd, TIMER_REFRESH, 500, 0);
             return 0;
         }
         case WM_SIZE:
@@ -505,6 +638,7 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             return 0;
         case WM_TIMER:
             refresh();
+            if (trafficMode) refresh_traffic();
             return 0;
         case WM_COMMAND:
             if (((wParam >> 16) & 0xFFFF) == BN_CLICKED) {
@@ -512,6 +646,8 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                     case ID_PROPERTIES: show_properties(); break;
                     case ID_TEST: test_port(); break;
                     case ID_REFRESH: rowCount = -1; refresh(); break;
+                    case ID_TRAFFIC: toggle_traffic(); break;
+                    case ID_RESET: reset_counters(); break;
                 }
             }
             return 0;
@@ -534,6 +670,8 @@ void WinMainCRTStartup(void) {
 
     GetWindowsDirectoryA(iniPath, 260);
     str_cat(iniPath, "\\winlator-comports.ini", sizeof(iniPath));
+    GetWindowsDirectoryA(trafficFile, 260);
+    str_cat(trafficFile, "\\winlator-comtraffic.txt", sizeof(trafficFile));
 
     WNDCLASSEXA wc;
     BYTE *p = (BYTE *)&wc;
@@ -548,7 +686,7 @@ void WinMainCRTStartup(void) {
     RegisterClassExA(&wc);
 
     HWND hwnd = CreateWindowExA(0, "WinlatorComPorts", "Gerenciador de Portas COM", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                                CW_USEDEFAULT, CW_USEDEFAULT, 700, 460, 0, 0, inst, 0);
+                                CW_USEDEFAULT, CW_USEDEFAULT, 760, 560, 0, 0, inst, 0);
     ShowWindow(hwnd, SW_SHOWNORMAL);
     UpdateWindow(hwnd);
 

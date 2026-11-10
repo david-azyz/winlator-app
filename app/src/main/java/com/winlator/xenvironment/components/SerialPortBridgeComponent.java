@@ -9,6 +9,7 @@ import com.winlator.core.AppUtils;
 import com.winlator.core.WineRegistryEditor;
 import com.winlator.serial.ComPortMapping;
 import com.winlator.serial.SerialBridge;
+import com.winlator.serial.TrafficLog;
 import com.winlator.serial.UsbSerialHelper;
 import com.winlator.xenvironment.EnvironmentComponent;
 
@@ -40,6 +41,7 @@ public class SerialPortBridgeComponent extends EnvironmentComponent implements S
     private Thread statusThread;
     private volatile boolean running = false;
     private String lastStatus = null;
+    private long lastTrafficSequence = -1;
 
     public SerialPortBridgeComponent(File wineprefixDir, List<ComPortMapping> mappings) {
         this.wineprefixDir = wineprefixDir;
@@ -137,11 +139,31 @@ public class SerialPortBridgeComponent extends EnvironmentComponent implements S
         if (!temp.renameTo(target)) temp.delete();
     }
 
+    /** Writes C:\\windows\\winlator-comtraffic.txt, shown by the Trafego button of comports.exe. */
+    private void writeTraffic() {
+        long sequence = TrafficLog.getSequence();
+        if (sequence == lastTrafficSequence) return;
+        lastTrafficSequence = sequence;
+
+        File windowsDir = new File(wineprefixDir, "drive_c/windows");
+        if (!windowsDir.isDirectory()) return;
+        File target = new File(windowsDir, "winlator-comtraffic.txt");
+        File temp = new File(windowsDir, "winlator-comtraffic.txt.tmp");
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(temp)) {
+            out.write(TrafficLog.getText().getBytes(java.nio.charset.Charset.forName("windows-1252")));
+        }
+        catch (Exception e) {
+            return;
+        }
+        if (!temp.renameTo(target)) temp.delete();
+    }
+
     private void runStatusWriter() {
         while (running) {
             writeStatus();
+            writeTraffic();
             try {
-                Thread.sleep(1000);
+                Thread.sleep(500);
             }
             catch (InterruptedException e) {
                 return;
@@ -167,6 +189,9 @@ public class SerialPortBridgeComponent extends EnvironmentComponent implements S
         installWindowsTools(context);
 
         for (SerialBridge bridge : bridges) bridge.start();
+
+        TrafficLog.clear();
+        for (SerialBridge bridge : bridges) TrafficLog.event(bridge.mapping.getComName(), "porta criada ("+bridge.getSlavePath()+"), modo "+bridge.mapping.getDeviceId());
 
         running = true;
         writeStatus();

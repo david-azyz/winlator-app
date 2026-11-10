@@ -273,6 +273,18 @@ public class SerialBridge implements SerialInputOutputManager.Listener {
             return;
         }
 
+        /* Start clean, like a freshly opened port on Windows: drop whatever the adapter
+         * buffered while connecting, and data the program wrote while there was no adapter. */
+        try {
+            newPort.purgeHwBuffers(true, true);
+        }
+        catch (Exception e) {}
+        int stale = 0;
+        byte[] junk = new byte[4096];
+        int n;
+        while ((n = SerialPty.read(masterFd, junk, 0)) > 0) stale += n;
+        if (stale > 0) TrafficLog.event(mapping.getComName(), stale+" bytes antigos descartados ao conectar");
+
         synchronized (portLock) {
             port = newPort;
             connection = newConnection;

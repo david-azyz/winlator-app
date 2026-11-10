@@ -24,7 +24,16 @@ typedef long ssize_t;
 #define SYS_close 3
 #define SYS_poll 7
 #define SYS_ioctl 16
+#define SYS_fcntl 72
 #define SYS_readlink 89
+#define SYS_openat 257
+
+#define AT_FDCWD (-100)
+#define F_GETFL 3
+#define F_SETFL 4
+#define O_NONBLOCK 04000
+#define O_CREAT 0100
+#define O_TMPFILE 020200000
 
 #define EPERM 1
 #define EINVAL 22
@@ -58,6 +67,8 @@ typedef long ssize_t;
 #define TIOCM_DSR 0x100
 
 #define TCIFLUSH 0
+#define TCOFLUSH 1
+#define TCIOFLUSH 2
 #define POLLIN 1
 
 #define CBAUD 0x100F
@@ -86,6 +97,13 @@ extern int *__errno_location(void);
 static long sys3(long n, long a, long b, long c) {
     long ret;
     __asm__ volatile ("syscall" : "=a"(ret) : "a"(n), "D"(a), "S"(b), "d"(c) : "rcx", "r11", "memory");
+    return ret;
+}
+
+static long sys4(long n, long a, long b, long c, long d) {
+    long ret;
+    register long r10 __asm__("r10") = d;
+    __asm__ volatile ("syscall" : "=a"(ret) : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10) : "rcx", "r11", "memory");
     return ret;
 }
 
@@ -167,6 +185,18 @@ static int force_emulation(void) {
     return cached;
 }
 
+/* Discards the data waiting to be read on fd (bytes received while no program used the port). */
+static void drain_input(int fd) {
+    static char junk[4096];
+    long flags = sys3(SYS_fcntl, fd, F_GETFL, 0);
+    if (flags < 0) return;
+    if (!(flags & O_NONBLOCK)) sys3(SYS_fcntl, fd, F_SETFL, flags | O_NONBLOCK);
+    for (int i = 0; i < 64; i++) {
+        if (sys3(SYS_read, fd, (long)junk, sizeof(junk)) <= 0) break;
+    }
+    if (!(flags & O_NONBLOCK)) sys3(SYS_fcntl, fd, F_SETFL, flags);
+}
+
 static long emulate(int fd, unsigned long req, void *arg) {
     switch (req) {
         case TCGETS2: {
@@ -223,6 +253,12 @@ static long emulate(int fd, unsigned long req, void *arg) {
             *(int *)arg = (r > 0 && (p.revents & POLLIN)) ? 1 : 0;
             return 0;
         }
+        case TCFLSH: {
+            /* PurgeComm: TCFLSH may be blocked; an input flush is done by reading out the queue. */
+            int what = (int)(long)arg;
+            if (what == TCIFLUSH || what == TCIOFLUSH) drain_input(fd);
+            return 0;
+        }
         case TIOCOUTQ:
             *(int *)arg = 0;
             return 0;
@@ -255,4 +291,65 @@ int ioctl(int fd, unsigned long req, ...) {
 
     if (r < 0) return fail(-r);
     return (int)r;
+}
+
+/*
+ * open() hooks. On Windows a COM port that no program has open drops what it
+ * receives, so a program always starts with an empty receive buffer. Here the
+ * bridge keeps the pty open, so bytes received earlier (line noise when the
+ * cable is plugged, data sent by the device, leftovers of a previous session)
+ * would wait in the pty and confuse the program's first exchange. When a pty
+ * is opened, its pending input is discarded.
+ */
+static int looks_like_com_path(const char *path) {
+    if (!path) return 0;
+    if (starts_with(path, "/dev/pts/")) return 1;
+    const char *base = path;
+    for (const char *p = path; *p; p++) if (*p == '/') base = p + 1;
+    return (base[0] == 'c' || base[0] == 'C') && (base[1] == 'o' || base[1] == 'O') &&
+           (base[2] == 'm' || base[2] == 'M') && base[3] >= '0' && base[3] <= '9';
+}
+
+static long do_openat(int dirfd, const char *path, int flags, long mode) {
+    long fd = sys4(SYS_openat, dirfd, (long)path, flags, mode);
+    if (fd >= 0 && looks_like_com_path(path) && is_pty((int)fd)) drain_input((int)fd);
+    return fd;
+}
+
+static int open_result(long r) {
+    if (r < 0) return fail(-r);
+    return (int)r;
+}
+
+static long mode_arg(int flags, __builtin_va_list ap) {
+    if ((flags & O_CREAT) || (flags & O_TMPFILE) == O_TMPFILE) return __builtin_va_arg(ap, int);
+    return 0;
+}
+
+int open(const char *path, int flags, ...) {
+    __builtin_va_list ap; __builtin_va_start(ap, flags); long mode = mode_arg(flags, ap); __builtin_va_end(ap);
+    return open_result(do_openat(AT_FDCWD, path, flags, mode));
+}
+
+int open64(const char *path, int flags, ...) {
+    __builtin_va_list ap; __builtin_va_start(ap, flags); long mode = mode_arg(flags, ap); __builtin_va_end(ap);
+    return open_result(do_openat(AT_FDCWD, path, flags, mode));
+}
+
+int openat(int dirfd, const char *path, int flags, ...) {
+    __builtin_va_list ap; __builtin_va_start(ap, flags); long mode = mode_arg(flags, ap); __builtin_va_end(ap);
+    return open_result(do_openat(dirfd, path, flags, mode));
+}
+
+int openat64(int dirfd, const char *path, int flags, ...) {
+    __builtin_va_list ap; __builtin_va_start(ap, flags); long mode = mode_arg(flags, ap); __builtin_va_end(ap);
+    return open_result(do_openat(dirfd, path, flags, mode));
+}
+
+int __open_2(const char *path, int flags) {
+    return open_result(do_openat(AT_FDCWD, path, flags, 0));
+}
+
+int __open64_2(const char *path, int flags) {
+    return open_result(do_openat(AT_FDCWD, path, flags, 0));
 }
